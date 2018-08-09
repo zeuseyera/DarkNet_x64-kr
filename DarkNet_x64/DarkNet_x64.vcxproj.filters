@@ -25,6 +25,9 @@
     <Filter Include="쿠다커널">
       <UniqueIdentifier>{382e4425-5130-4da6-81d2-25b24883705e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="포함">
+      <UniqueIdentifier>{948d4e6f-5a95-4029-b9be-4590b0932e6c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Text Include="ReadMe.txt" />
@@ -129,69 +132,6 @@
     <ClInclude Include="src\utils.h">
       <Filter>도구</Filter>
     </ClInclude>
-    <ClInclude Include="src\unistd.h">
-      <Filter>도구</Filter>
-    </ClInclude>
-    <ClInclude Include="src\getopt.h">
-      <Filter>도구</Filter>
-    </ClInclude>
-    <ClInclude Include="src\gettimeofday.h">
-      <Filter>도구</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\art.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\captcha.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\cifar.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\classifier.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\coco.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\compare.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\demo.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\detector.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\dice.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\go.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\nightmare.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\rnn.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\rnn_vid.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\super.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\tag.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\voxel.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\writing.h">
-      <Filter>구현</Filter>
-    </ClInclude>
-    <ClInclude Include="GuHyeon\yolo.h">
-      <Filter>구현</Filter>
-    </ClInclude>
     <ClInclude Include="src\option_list.h">
       <Filter>도구</Filter>
     </ClInclude>
@@ -218,6 +158,33 @@
     </ClInclude>
     <ClInclude Include="src\matrix.h">
       <Filter>도구</Filter>
+    </ClInclude>
+    <ClInclude Include="include\darknet.h">
+      <Filter>포함</Filter>
+    </ClInclude>
+    <ClInclude Include="include\getopt.h">
+      <Filter>포함</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gettimeofday.h">
+      <Filter>포함</Filter>
+    </ClInclude>
+    <ClInclude Include="include\unistd.h">
+      <Filter>포함</Filter>
+    </ClInclude>
+    <ClInclude Include="src\layer_upsample.h">
+      <Filter>신경망</Filter>
+    </ClInclude>
+    <ClInclude Include="src\layer_yolo.h">
+      <Filter>신경망</Filter>
+    </ClInclude>
+    <ClInclude Include="src\layer_l2norm.h">
+      <Filter>신경망</Filter>
+    </ClInclude>
+    <ClInclude Include="src\layer_logistic.h">
+      <Filter>신경망</Filter>
+    </ClInclude>
+    <ClInclude Include="src\layer_lstm.h">
+      <Filter>신경망</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -314,12 +281,6 @@
     <ClCompile Include="src\utils.c">
       <Filter>도구</Filter>
     </ClCompile>
-    <ClCompile Include="src\getopt.c">
-      <Filter>도구</Filter>
-    </ClCompile>
-    <ClCompile Include="src\gettimeofday.c">
-      <Filter>도구</Filter>
-    </ClCompile>
     <ClCompile Include="GuHyeon\art.c">
       <Filter>구현</Filter>
     </ClCompile>
@@ -401,30 +362,63 @@
     <ClCompile Include="src\matrix.c">
       <Filter>도구</Filter>
     </ClCompile>
+    <ClCompile Include="include\getopt.c">
+      <Filter>포함</Filter>
+    </ClCompile>
+    <ClCompile Include="include\gettimeofday.c">
+      <Filter>포함</Filter>
+    </ClCompile>
+    <ClCompile Include="GuHyeon\attention.c">
+      <Filter>구현</Filter>
+    </ClCompile>
+    <ClCompile Include="GuHyeon\lsd.c">
+      <Filter>구현</Filter>
+    </ClCompile>
+    <ClCompile Include="GuHyeon\regressor.c">
+      <Filter>구현</Filter>
+    </ClCompile>
+    <ClCompile Include="GuHyeon\segmenter.c">
+      <Filter>구현</Filter>
+    </ClCompile>
+    <ClCompile Include="GuHyeon\swag.c">
+      <Filter>구현</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer_upsample.c">
+      <Filter>신경망</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer_yolo.c">
+      <Filter>신경망</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer_l2norm.c">
+      <Filter>신경망</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer_logistic.c">
+      <Filter>신경망</Filter>
+    </ClCompile>
+    <ClCompile Include="src\layer_lstm.c">
+      <Filter>신경망</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="src\activation_kernels.cu">
-      <Filter>쿠다커널</Filter>
-    </CudaCompile>
     <CudaCompile Include="src\blas_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
     <CudaCompile Include="src\col2im_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
-    <CudaCompile Include="src\convolutional_kernels.cu">
-      <Filter>쿠다커널</Filter>
-    </CudaCompile>
-    <CudaCompile Include="src\deconvolutional_kernels.cu">
-      <Filter>쿠다커널</Filter>
-    </CudaCompile>
     <CudaCompile Include="src\im2col_kernels.cu">
+      <Filter>쿠다커널</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\layer_activation_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
     <CudaCompile Include="src\layer_avgpool_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
-    <CudaCompile Include="src\layer_crop_kernels.cu">
+    <CudaCompile Include="src\layer_convolutional_kernels.cu">
+      <Filter>쿠다커널</Filter>
+    </CudaCompile>
+    <CudaCompile Include="src\layer_deconvolutional_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
     <CudaCompile Include="src\layer_dropout_kernels.cu">
@@ -433,7 +427,7 @@
     <CudaCompile Include="src\layer_maxpool_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
-    <CudaCompile Include="src\network_kernels.cu">
+    <CudaCompile Include="src\layer_crop_kernels.cu">
       <Filter>쿠다커널</Filter>
     </CudaCompile>
   </ItemGroup>

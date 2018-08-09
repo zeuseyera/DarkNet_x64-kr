@@ -5,33 +5,28 @@
 #include "layer.h"
 #include "network.h"
 
-#ifdef __cplusplus	// 선언하는 헤더파일은 포함하지 않는다
-extern "C" {
-#endif
+layer make_connected_layer( int batch
+						, int inputs
+						, int outputs
+						, ACTIVATION activation
+						, int batch_normalize
+						, int adam );
 
-typedef layer connected_layer;
-
-connected_layer make_connected_layer( int batch, int inputs, int outputs
-									, ACTIVATION activation, int batch_normalize );
-
-void forward_connected_layer( connected_layer layer, network_state state );
-void backward_connected_layer( connected_layer layer, network_state state );
-void update_connected_layer( connected_layer layer, int batch
-							, float learning_rate, float momentum, float decay );
-void denormalize_connected_layer( layer l );
-void statistics_connected_layer( layer l );
+void forward_connected_layer( layer l, network net );
+void backward_connected_layer( layer l, network net );
+void update_connected_layer( layer l, update_args a );
+// 연결층 가중값 시각화 [7/15/2018 jobs]
+image *visualize_connected_layer_output( layer Lyr, char *window, image *prev_weights );
+image *visualize_connected_layer_weight( layer Lyr, char *window, image *prev_weights );
+//void denormalize_connected_layer( layer l );	// c2732 에러 [6/28/2018 jobs]
+//void statistics_connected_layer( layer l );	// c2732 에러 [6/28/2018 jobs]
 
 #ifdef GPU
-void forward_connected_layer_gpu( connected_layer layer, network_state state );
-void backward_connected_layer_gpu( connected_layer layer, network_state state );
-void update_connected_layer_gpu( connected_layer layer, int batch
-							, float learning_rate, float momentum, float decay );
-void push_connected_layer( connected_layer layer );
-void pull_connected_layer( connected_layer layer );
-#endif
-
-#ifdef __cplusplus
-}
+void forward_connected_layer_gpu( layer l, network net );
+void backward_connected_layer_gpu( layer l, network net );
+void update_connected_layer_gpu( layer l, update_args a );
+void push_connected_layer( layer l );
+void pull_connected_layer( layer l );
 #endif
 
 #endif

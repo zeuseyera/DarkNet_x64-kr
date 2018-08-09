@@ -5,145 +5,146 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *get_activation_string( ACTIVATION a )
+char *get_activation_string( ACTIVATION act )
 {
-	switch ( a )
+    switch( act )
 	{
-	case LOGISTIC:
-		return "logistic";
-	case LOGGY:
-		return "loggy";
-	case RELU:
-		return "relu";
-	case ELU:
-		return "elu";
-	case RELIE:
-		return "relie";
-	case RAMP:
-		return "ramp";
-	case LINEAR:
-		return "linear";
-	case TANH:
-		return "tanh";
-	case PLSE:
-		return "plse";
-	case LEAKY:
-		return "leaky";
-	case STAIR:
-		return "stair";
-	case HARDTAN:
-		return "hardtan";
-	case LHTAN:
-		return "lhtan";
-	default:
-		break;
-	}
-	return "relu";
+        case LOGISTIC:
+            return "logistic";
+        case LOGGY:
+            return "loggy";
+        case RELU:
+            return "relu";
+        case ELU:
+            return "elu";
+        case RELIE:
+            return "relie";
+        case RAMP:
+            return "ramp";
+        case LINEAR:
+            return "linear";
+        case TANH:
+            return "tanh";
+        case PLSE:
+            return "plse";
+        case LEAKY:
+            return "leaky";
+        case STAIR:
+            return "stair";
+        case HARDTAN:
+            return "hardtan";
+        case LHTAN:
+            return "lhtan";
+        default:
+            break;
+    }
+    return "relu";
 }
 
-ACTIVATION get_activation( char *s )
+ACTIVATION get_activation( char *str )
 {
-	if ( strcmp( s, "logistic" )==0 )	return LOGISTIC;
-	if ( strcmp( s, "loggy" )==0 )		return LOGGY;
-	if ( strcmp( s, "relu" )==0 )		return RELU;
-	if ( strcmp( s, "elu" )==0 )		return ELU;
-	if ( strcmp( s, "relie" )==0 )		return RELIE;
-	if ( strcmp( s, "plse" )==0 )		return PLSE;
-	if ( strcmp( s, "hardtan" )==0 )	return HARDTAN;
-	if ( strcmp( s, "lhtan" )==0 )		return LHTAN;
-	if ( strcmp( s, "linear" )==0 )		return LINEAR;
-	if ( strcmp( s, "ramp" )==0 )		return RAMP;
-	if ( strcmp( s, "leaky" )==0 )		return LEAKY;
-	if ( strcmp( s, "tanh" )==0 )		return TANH;
-	if ( strcmp( s, "stair" )==0 )		return STAIR;
+	if ( strcmp( str, "logistic" )==0 )	return LOGISTIC;
+	if ( strcmp( str, "loggy" )==0 )	return LOGGY;
+	if ( strcmp( str, "relu" )==0 )		return RELU;
+	if ( strcmp( str, "elu" )==0 )		return ELU;
+	if ( strcmp( str, "relie" )==0 )	return RELIE;
+	if ( strcmp( str, "plse" )==0 )		return PLSE;
+	if ( strcmp( str, "hardtan" )==0 )	return HARDTAN;
+	if ( strcmp( str, "lhtan" )==0 )	return LHTAN;
+	if ( strcmp( str, "linear" )==0 )	return LINEAR;
+	if ( strcmp( str, "ramp" )==0 )		return RAMP;
+	if ( strcmp( str, "leaky" )==0 )	return LEAKY;
+	if ( strcmp( str, "tanh" )==0 )		return TANH;
+	if ( strcmp( str, "stair" )==0 )	return STAIR;
 
-	fprintf( stderr, "Couldn't find activation function %s, going with ReLU\n", s );
+	fprintf( stderr, "Couldn't find activation function %s, going with ReLU\n", str );
+
 	return RELU;
 }
 
-float activate( float x, ACTIVATION a )
+float activate( float xx, ACTIVATION act )
 {
-	switch ( a )
+	switch ( act )
 	{
-	case LINEAR:
-		return linear_activate( x );
-	case LOGISTIC:
-		return logistic_activate( x );
-	case LOGGY:
-		return loggy_activate( x );
-	case RELU:
-		return relu_activate( x );
-	case ELU:
-		return elu_activate( x );
-	case RELIE:
-		return relie_activate( x );
-	case RAMP:
-		return ramp_activate( x );
-	case LEAKY:
-		return leaky_activate( x );
-	case TANH:
-		return tanh_activate( x );
-	case PLSE:
-		return plse_activate( x );
-	case STAIR:
-		return stair_activate( x );
-	case HARDTAN:
-		return hardtan_activate( x );
-	case LHTAN:
-		return lhtan_activate( x );
+		case LINEAR:
+			return linear_activate( xx );
+		case LOGISTIC:
+			return logistic_activate( xx );
+		case LOGGY:
+			return loggy_activate( xx );
+		case RELU:
+			return relu_activate( xx );
+		case ELU:
+			return elu_activate( xx );
+		case RELIE:
+			return relie_activate( xx );
+		case RAMP:
+			return ramp_activate( xx );
+		case LEAKY:
+			return leaky_activate( xx );
+		case TANH:
+			return tanh_activate( xx );
+		case PLSE:
+			return plse_activate( xx );
+		case STAIR:
+			return stair_activate( xx );
+		case HARDTAN:
+			return hardtan_activate( xx );
+		case LHTAN:
+			return lhtan_activate( xx );
 	}
 	return 0;
 }
 
-void activate_array( float *x, const int n, const ACTIVATION a )
+void activate_array( float *xx, const int nn, const ACTIVATION act )
 {
-	int i;
-	for ( i = 0; i < n; ++i )
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
-		x[i] = activate( x[i], a );
+		xx[ii] = activate( xx[ii], act );
 	}
 }
 
-float gradient( float x, ACTIVATION a )
+float gradient( float xx, ACTIVATION act )
 {
-	switch ( a )
+	switch ( act )
 	{
-	case LINEAR:
-		return linear_gradient( x );
-	case LOGISTIC:
-		return logistic_gradient( x );
-	case LOGGY:
-		return loggy_gradient( x );
-	case RELU:
-		return relu_gradient( x );
-	case ELU:
-		return elu_gradient( x );
-	case RELIE:
-		return relie_gradient( x );
-	case RAMP:
-		return ramp_gradient( x );
-	case LEAKY:
-		return leaky_gradient( x );
-	case TANH:
-		return tanh_gradient( x );
-	case PLSE:
-		return plse_gradient( x );
-	case STAIR:
-		return stair_gradient( x );
-	case HARDTAN:
-		return hardtan_gradient( x );
-	case LHTAN:
-		return lhtan_gradient( x );
+		case LINEAR:
+			return linear_gradient( xx );
+		case LOGISTIC:
+			return logistic_gradient( xx );
+		case LOGGY:
+			return loggy_gradient( xx );
+		case RELU:
+			return relu_gradient( xx );
+		case ELU:
+			return elu_gradient( xx );
+		case RELIE:
+			return relie_gradient( xx );
+		case RAMP:
+			return ramp_gradient( xx );
+		case LEAKY:
+			return leaky_gradient( xx );
+		case TANH:
+			return tanh_gradient( xx );
+		case PLSE:
+			return plse_gradient( xx );
+		case STAIR:
+			return stair_gradient( xx );
+		case HARDTAN:
+			return hardtan_gradient( xx );
+		case LHTAN:
+			return lhtan_gradient( xx );
 	}
 	return 0;
 }
 
-void gradient_array( const float *x, const int n, const ACTIVATION a, float *delta )
+void gradient_array( const float *xx, const int nn, const ACTIVATION act, float *delta )
 {
-	int i;
-	for ( i = 0; i < n; ++i )
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
-		delta[i] *= gradient( x[i], a );
+		delta[ii] *= gradient( xx[ii], act );
 	}
 }
 

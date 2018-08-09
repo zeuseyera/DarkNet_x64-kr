@@ -1,71 +1,81 @@
-// DarkNet_x64.cpp : ÄÜ¼Ö ÀÀ¿ë ÇÁ·Î±×·¥¿¡ ´ëÇÑ ÁøÀÔÁ¡À» Á¤ÀÇÇÕ´Ï´Ù.
+ï»¿// DarkNet_CPP.cpp : ì½˜ì†” ì‘ìš© í”„ë¡œê·¸ë¨ì— ëŒ€í•œ ì§„ì…ì ì„ ì •ì˜í•©ë‹ˆë‹¤.
 //
 
 #include "stdafx.h"
+#include "darknet.h"
 
-#include "./src/utils.h"
+//#include <time.h>
+//#include <stdlib.h>
+//#include <stdio.h>
 
-#include "./src/cuda.h"
-#include "./src/blas.h"
-#include "./src/parser.h"
-#include "./src/layer_connected.h"
-#include "./src/image.h"
+#ifdef OPENCV
+#include "opencv2/highgui/highgui_c.h"
+#endif
 
-#include "./GuHyeon/detector.h"
-#include "./GuHyeon/yolo.h"
-#include "./GuHyeon/voxel.h"
-#include "./GuHyeon/super.h"
-#include "./GuHyeon/cifar.h"
-#include "./GuHyeon/go.h"
-#include "./GuHyeon/rnn.h"
-#include "./GuHyeon/rnn_vid.h"
-#include "./GuHyeon/nightmare.h"
-#include "./GuHyeon/coco.h"
-#include "./GuHyeon/classifier.h"
-#include "./GuHyeon/art.h"
-#include "./GuHyeon/tag.h"
-#include "./GuHyeon/compare.h"
-#include "./GuHyeon/dice.h"
-#include "./GuHyeon/writing.h"
-#include "./GuHyeon/captcha.h"
+/*		//  [7/15/2018 jobs]
+extern void predict_classifier( char *datacfg
+						, char *cfgfile
+						, char *weightfile
+						, char *filename
+						, int top );
+extern void test_detector( char *datacfg
+						, char *cfgfile
+						, char *weightfile
+						, char *filename
+						, float thresh
+						, float hier_thresh
+						, char *outfile
+						, int fullscreen );
+extern void run_yolo( int argc, char **argv );
+extern void run_detector( int argc, char **argv );
+extern void run_coco( int argc, char **argv );
+extern void run_captcha( int argc, char **argv );
+extern void run_nightmare( int argc, char **argv );
+extern void run_classifier( int argc, char **argv );
+extern void run_regressor( int argc, char **argv );
+extern void run_segmenter( int argc, char **argv );
+extern void run_char_rnn( int argc, char **argv );
+extern void run_tag( int argc, char **argv );
+extern void run_cifar( int argc, char **argv );
+extern void run_go( int argc, char **argv );
+extern void run_art( int argc, char **argv );
+extern void run_super( int argc, char **argv );
+extern void run_lsd( int argc, char **argv );
+*/
 
-//#ifdef OPENCV
-//#include "opencv2/highgui/highgui_c.h"
-//#endif
-
-// ¼±Á¤ÇÑ ¸ğµç ÆÄÀÏÀÇ ½Å°æ¸Á °¡Áß°ªÀ» ´õÇÏ°í Æò±ÕÇÏ¿© »õ·Î¿î ½Å°æ¸Á °¡Áß°ªÀ» »ı¼ºÇÑ´Ù
+// ì„ ì •í•œ ëª¨ë“  íŒŒì¼ì˜ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ë”í•˜ê³  í‰ê· í•˜ì—¬ ìƒˆë¡œìš´ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ìƒì„±í•œë‹¤
 void average( int argc, char *argv[] )
 {
-	char *cfgfile = argv[2];	// ½Å°æ¸Á ¼³Á¤°ª ÆÄÀÏ¸í
-	char *outfile = argv[3];	// ½Å°æ¸Á °¡Áß°ªÀ» ÀúÀåÇÒ ÆÄÀÏ¸í
+	char *cfgfile = argv[2];	// ì‹ ê²½ë§ ì„¤ì •ê°’ íŒŒì¼ëª…
+	char *outfile = argv[3];	// ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ì €ì¥í•  íŒŒì¼ëª…
 
 	gpu_index = -1;
 
-	network net = parse_network_cfg( cfgfile );	// 
-	network sum = parse_network_cfg( cfgfile );	// 
+	network *net = parse_network_cfg( cfgfile );	// 
+	network *sum = parse_network_cfg( cfgfile );	// 
 
-	char *weightfile = argv[4];	// Å¾ÀçÇÒ ½Å°æ¸Á °¡Áß°ª ÆÄÀÏ¸í
+	char *weightfile = argv[4];	// íƒ‘ì¬í•  ì‹ ê²½ë§ ê°€ì¤‘ê°’ íŒŒì¼ëª…
 
-	load_weights( &sum, weightfile );
+	load_weights( sum, weightfile );
 
-	// ¿©·¯°³ÀÇ ½Å°æ¸Á °¡Áß°ªÀ» °¢°¢ ´õÇÑ´Ù
+	// ì—¬ëŸ¬ê°œì˜ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ê°ê° ë”í•œë‹¤
 	int i, j;
-	int MangGaeSu = argc - 5;	// Æò±ÕÇÒ ½Å°æ¸Á ÆÄÀÏ °³¼ö
+	int MangGaeSu = argc - 5;	// í‰ê· í•  ì‹ ê²½ë§ íŒŒì¼ ê°œìˆ˜
 	for ( i=0; i<MangGaeSu; ++i )
 	{
 		weightfile = argv[i+5];
-		load_weights( &net, weightfile );
+		load_weights( net, weightfile );
 
-		for ( j=0; j<net.n; ++j )
+		for ( j=0; j<net->n; ++j )
 		{
-			layer l = net.layers[j];
-			layer out = sum.layers[j];
+			layer l = net->layers[j];
+			layer out = sum->layers[j];
 
 			if ( l.type == CONVOLUTIONAL )
 			{
 				int num = l.n*l.c*l.size*l.size;
-				axpy_cpu( l.n, 1.0f, l.biases, 1, out.biases, 1 );		// ÆíÇâ°ªÀ» ´õÇÑ´Ù
-				axpy_cpu( num, 1.0f, l.weights, 1, out.weights, 1 );	// °¡Áß°ªÀ» ´õÇÑ´Ù
+				axpy_cpu( l.n, 1.0f, l.biases, 1, out.biases, 1 );		// í¸í–¥ê°’ì„ ë”í•œë‹¤
+				axpy_cpu( num, 1.0f, l.weights, 1, out.weights, 1 );	// ê°€ì¤‘ê°’ì„ ë”í•œë‹¤
 
 				if ( l.batch_normalize )
 				{
@@ -83,15 +93,15 @@ void average( int argc, char *argv[] )
 		}
 	}
 
-	// ´õÇØÁø ¿©·¯°³ÀÇ ½Å°æ¸Á °¡Áß°ªÀ» °¢°¢ Æò±ÕÀ» °è»êÇÏ¿© »õ·Î¿î ½Å°æ¸Á °¡Áß°ªÀ» ¸¸µç´Ù
-	// ±âº» ½Å°æ¸Á + Ãß°¡ÇÑ ½Å°æ¸Á °³¼ö
+	// ë”í•´ì§„ ì—¬ëŸ¬ê°œì˜ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ê°ê° í‰ê· ì„ ê³„ì‚°í•˜ì—¬ ìƒˆë¡œìš´ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ë§Œë“ ë‹¤
+	// ê¸°ë³¸ ì‹ ê²½ë§ + ì¶”ê°€í•œ ì‹ ê²½ë§ ê°œìˆ˜
 	MangGaeSu = MangGaeSu+1;
 
-	float BiYul	= 1.0f / MangGaeSu;	// Àû¿ëÇÒ °¡Áß°ªºñÀ² °è»ê
+	float BiYul	= 1.0f / MangGaeSu;	// ì ìš©í•  ê°€ì¤‘ê°’ë¹„ìœ¨ ê³„ì‚°
 
-	for ( j=0; j<net.n; ++j )		// ½Å°æ¸ÁÃşÀ» ¹İº¹ÇÑ´Ù
+	for ( j=0; j<net->n; ++j )		// ì‹ ê²½ë§ì¸µì„ ë°˜ë³µí•œë‹¤
 	{
-		layer l = sum.layers[j];
+		layer l = sum->layers[j];
 
 		if ( l.type == CONVOLUTIONAL )
 		{
@@ -114,123 +124,188 @@ void average( int argc, char *argv[] )
 		}
 	}
 
-	// »õ·Î¿î ½Å°æ¸Á °¡Áß°ªÀ» ÆÄÀÏ·Î ÀúÀåÇÑ´Ù
+	// ìƒˆë¡œìš´ ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ íŒŒì¼ë¡œ ì €ì¥í•œë‹¤
 	save_weights( sum, outfile );
 }
-// ½Å°æ¸Á °è»ê¼Óµµ Æò°¡
+
+long numops( network *net )
+{
+	int i;
+	long ops = 0;
+	for ( i = 0; i < net->n; ++i )
+	{
+		layer l = net->layers[i];
+		if ( l.type == CONVOLUTIONAL )
+		{
+			ops += 2l * l.n * l.size*l.size*l.c/l.groups * l.out_h*l.out_w;
+		}
+		else if ( l.type == CONNECTED )
+		{
+			ops += 2l * l.inputs * l.outputs;
+		}
+		else if ( l.type == RNN )
+		{
+			ops += 2l * l.input_layer->inputs * l.input_layer->outputs;
+			ops += 2l * l.self_layer->inputs * l.self_layer->outputs;
+			ops += 2l * l.output_layer->inputs * l.output_layer->outputs;
+		}
+		else if ( l.type == GRU )
+		{
+			ops += 2l * l.uz->inputs * l.uz->outputs;
+			ops += 2l * l.uh->inputs * l.uh->outputs;
+			ops += 2l * l.ur->inputs * l.ur->outputs;
+			ops += 2l * l.wz->inputs * l.wz->outputs;
+			ops += 2l * l.wh->inputs * l.wh->outputs;
+			ops += 2l * l.wr->inputs * l.wr->outputs;
+		}
+		else if ( l.type == LSTM )
+		{
+			ops += 2l * l.uf->inputs * l.uf->outputs;
+			ops += 2l * l.ui->inputs * l.ui->outputs;
+			ops += 2l * l.ug->inputs * l.ug->outputs;
+			ops += 2l * l.uo->inputs * l.uo->outputs;
+			ops += 2l * l.wf->inputs * l.wf->outputs;
+			ops += 2l * l.wi->inputs * l.wi->outputs;
+			ops += 2l * l.wg->inputs * l.wg->outputs;
+			ops += 2l * l.wo->inputs * l.wo->outputs;
+		}
+	}
+	return ops;
+}
+
+// ì‹ ê²½ë§ ê³„ì‚°ì†ë„ í‰ê°€
 void speed( char *cfgfile, int HoiSu )
 {
 	if ( HoiSu==0 )
 		HoiSu = 1000;
-	// ½Å°æ¸Á ¼³Á¤ÆÄÀÏ·Î ½Å°æ¸ÁÀ» »ı¼ºÇÑ´Ù
-	network net = parse_network_cfg( cfgfile );
+	// ì‹ ê²½ë§ ì„¤ì •íŒŒì¼ë¡œ ì‹ ê²½ë§ì„ ìƒì„±í•œë‹¤
+	network *net = parse_network_cfg( cfgfile );
 
-	set_batch_network( &net, 1 );
+	set_batch_network( net, 1 );
 
 	int i;
-	time_t start = time( 0 );
-	image im = make_image( net.w, net.h, net.c );
+	//time_t start = time( 0 );
+	double start = what_time_is_it_now();
+	image im = make_image( net->w, net->h, net->c*net->batch );
 
-	// È¸¼ö¸¦ ¹İº¹ÇÏ¿© ½Å°æ¸Á Ãâ·ÂÀ» °è»êÇÑ´Ù
+	// íšŒìˆ˜ë¥¼ ë°˜ë³µí•˜ì—¬ ì‹ ê²½ë§ ì¶œë ¥ì„ ê³„ì‚°í•œë‹¤
 	for ( i=0; i<HoiSu; ++i )
 	{
 		network_predict( net, im.data );
 	}
 
-	double JiNanSiGan = difftime( time( 0 ), start );
+	//double JiNanSiGan = difftime( time( 0 ), start );
+	double JiNanSiGan = what_time_is_it_now() - start;
 
-	printf( "\n%d È¸ Æò°¡¿¡, %f ÃÊ °É¸²\n", HoiSu, JiNanSiGan );
-	printf( "1È¸ Æò°¡¼Óµµ: %f ÃÊ(sec/Æò°¡È¸¼ö)\n", JiNanSiGan/HoiSu );
-	printf( "¼Óµµ: %f Hz\n", HoiSu/JiNanSiGan );
+	long ops = numops( net );
+
+	printf( "\n%d íšŒ í‰ê°€ì—, %f ì´ˆ ê±¸ë¦¼\n", HoiSu, JiNanSiGan );
+	printf( "ë¶€ë™ì†Œìˆ˜ì—°ì‚°: %.2f Bn\n", (float)ops/1000000000.0 );
+	printf( "FLOPS: %.2f Bn\n", (float)ops/1000000000.0 * HoiSu/JiNanSiGan );
+	printf( "1íšŒ í‰ê°€ì†ë„: %f ì´ˆ(sec/í‰ê°€íšŒìˆ˜)\n", JiNanSiGan/HoiSu );
+	printf( "ì†ë„: %f Hz\n", HoiSu/JiNanSiGan );
 }
 
 void operations( char *cfgfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
+	network *net = parse_network_cfg( cfgfile );
 
-	int i;
-	long ops = 0;
+	long ops = numops(net);
 
-	for ( i=0; i<net.n; ++i )
-	{
-		layer l = net.layers[i];
-
-		if ( l.type==CONVOLUTIONAL )
-		{
-			ops += 2l * l.n * l.size*l.size*l.c * l.out_h*l.out_w;
-		}
-		else if ( l.type==CONNECTED )
-		{
-			ops += 2l * l.inputs * l.outputs;
-		}
-	}
-
-	printf( "Floating Point Operations: %ld\n", ops );
-	printf( "Floating Point Operations: %.2f Bn\n", (float)ops/1000000000. );
+	printf( "ë¶€ë™ì†Œìˆ˜ì—°ì‚°: %ld\n", ops );
+	printf( "ë¶€ë™ì†Œìˆ˜ì—°ì‚°: %.2f Bn\n", (float)ops/1000000000.0 );
 }
 
 void oneoff( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
+	network *net = parse_network_cfg( cfgfile );
 
-	int oldn = net.layers[net.n - 2].n;
-	int c = net.layers[net.n - 2].c;
-	net.layers[net.n - 2].n = 9372;
-	net.layers[net.n - 2].biases += 5;
-	net.layers[net.n - 2].weights += 5*c;
+	int oldn = net->layers[net->n - 2].n;
+	int c = net->layers[net->n - 2].c;
+
+	scal_cpu( oldn*c, .1, net->layers[net->n - 2].weights, 1 );
+	scal_cpu( oldn, 0, net->layers[net->n - 2].biases, 1 );
+
+	net->layers[net->n - 2].n = 11921;
+	net->layers[net->n - 2].biases += 5;
+	net->layers[net->n - 2].weights += 5*c;
 
 	if ( weightfile )
 	{
-		load_weights( &net, weightfile );
+		load_weights( net, weightfile );
 	}
 
-	net.layers[net.n - 2].biases -= 5;
-	net.layers[net.n - 2].weights -= 5*c;
-	net.layers[net.n - 2].n = oldn;
+	net->layers[net->n - 2].biases -= 5;
+	net->layers[net->n - 2].weights -= 5*c;
+	net->layers[net->n - 2].n = oldn;
 	printf( "%d\n", oldn );
 
-	layer l = net.layers[net.n - 2];
+	layer l = net->layers[net->n - 2];
 	copy_cpu( l.n/3, l.biases, 1, l.biases +   l.n/3, 1 );
 	copy_cpu( l.n/3, l.biases, 1, l.biases + 2*l.n/3, 1 );
 	copy_cpu( l.n/3*l.c, l.weights, 1, l.weights +   l.n/3*l.c, 1 );
 	copy_cpu( l.n/3*l.c, l.weights, 1, l.weights + 2*l.n/3*l.c, 1 );
 
-	*net.seen = 0;
+	*net->seen = 0;
 
 	save_weights( net, outfile );
+}
+
+void oneoff2( char *cfgfile, char *weightfile, char *outfile, int l )
+{
+	gpu_index = -1;
+	network *net = parse_network_cfg( cfgfile );
+	if ( weightfile )
+	{
+		load_weights_upto( net, weightfile, 0, net->n );
+		load_weights_upto( net, weightfile, l, net->n );
+	}
+	*net->seen = 0;
+	save_weights_upto( net, outfile, net->n );
 }
 
 void partial( char *cfgfile, char *weightfile, char *outfile, int max )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
 
-	if ( weightfile )
-	{
-		load_weights_upto( &net, weightfile, max );
-	}
-	*net.seen = 0;
+	network *net = load_network( cfgfile, weightfile, 1 );
 
 	save_weights_upto( net, outfile, max );
 }
 
-#include "./src/layer_convolutional.h"
+void print_weights( char *cfgfile, char *weightfile, int n )
+{
+	gpu_index = -1;
+	network *net = load_network( cfgfile, weightfile, 1 );
+	layer l = net->layers[n];
+
+	int i, j;
+	//printf("[");
+	for ( i = 0; i < l.n; ++i )
+	{
+		//printf("[");
+		for ( j = 0; j < l.size*l.size*l.c; ++j )
+		{
+			//if(j > 0) printf(",");
+			printf( "%g ", l.weights[i*l.size*l.size*l.c + j] );
+		}
+		printf( "\n" );
+		//printf("]%s\n", (i == l.n-1)?"":",");
+	}
+	//printf("]");
+}
+
 void rescale_net( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network( cfgfile, weightfile, 0 );
 
 	int i;
-	for ( i=0; i<net.n; ++i )
+	for ( i=0; i<net->n; ++i )
 	{
-		layer l = net.layers[i];
+		layer l = net->layers[i];
 
 		if ( l.type==CONVOLUTIONAL )
 		{
@@ -245,17 +320,12 @@ void rescale_net( char *cfgfile, char *weightfile, char *outfile )
 void rgbgr_net( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network(cfgfile, weightfile, 0);
 
 	int i;
-	for ( i=0; i<net.n; ++i )
+	for ( i=0; i<net->n; ++i )
 	{
-		layer l = net.layers[i];
+		layer l = net->layers[i];
 
 		if ( l.type==CONVOLUTIONAL )
 		{
@@ -270,17 +340,12 @@ void rgbgr_net( char *cfgfile, char *weightfile, char *outfile )
 void reset_normalize_net( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network(cfgfile, weightfile, 0);
 
 	int i;
-	for ( i=0; i<net.n; ++i )
+	for ( i=0; i<net->n; ++i )
 	{
-		layer l = net.layers[i];
+		layer l = net->layers[i];
 
 		if ( l.type == CONVOLUTIONAL && l.batch_normalize )
 		{
@@ -329,22 +394,19 @@ layer normalize_layer( layer l, int n )
 void normalize_net( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network(cfgfile, weightfile, 0);
+
 	int i;
-	for ( i = 0; i < net.n; ++i )
+	for ( i = 0; i < net->n; ++i )
 	{
-		layer l = net.layers[i];
+		layer l = net->layers[i];
 		if ( l.type == CONVOLUTIONAL && !l.batch_normalize )
 		{
-			net.layers[i] = normalize_layer( l, l.n );
+			net->layers[i] = normalize_layer( l, l.n );
 		}
 		if ( l.type == CONNECTED && !l.batch_normalize )
 		{
-			net.layers[i] = normalize_layer( l, l.outputs );
+			net->layers[i] = normalize_layer( l, l.outputs );
 		}
 		if ( l.type == GRU && l.batch_normalize )
 		{
@@ -354,7 +416,7 @@ void normalize_net( char *cfgfile, char *weightfile, char *outfile )
 			*l.state_z_layer = normalize_layer( *l.state_z_layer, l.state_z_layer->outputs );
 			*l.state_r_layer = normalize_layer( *l.state_r_layer, l.state_r_layer->outputs );
 			*l.state_h_layer = normalize_layer( *l.state_h_layer, l.state_h_layer->outputs );
-			net.layers[i].batch_normalize=1;
+			net->layers[i].batch_normalize=1;
 		}
 	}
 	save_weights( net, outfile );
@@ -363,18 +425,13 @@ void normalize_net( char *cfgfile, char *weightfile, char *outfile )
 void statistics_net( char *cfgfile, char *weightfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network( cfgfile, weightfile, 0 );
 
 	int i;
 
-	for ( i = 0; i < net.n; ++i )
+	for ( i = 0; i < net->n; ++i )
 	{
-		layer l = net.layers[i];
+		layer l = net->layers[i];
 		if ( l.type == CONNECTED && l.batch_normalize )
 		{
 			printf( "Connected Layer %d\n", i );
@@ -403,26 +460,22 @@ void statistics_net( char *cfgfile, char *weightfile )
 void denormalize_net( char *cfgfile, char *weightfile, char *outfile )
 {
 	gpu_index = -1;
-	network net = parse_network_cfg( cfgfile );
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
+	network *net = load_network( cfgfile, weightfile, 0 );
 
-	int i;
-	for ( i = 0; i < net.n; ++i )
+	int ii;
+	for ( ii=0; ii < net->n; ++ii )
 	{
-		layer l = net.layers[i];
-		if ( l.type == CONVOLUTIONAL && l.batch_normalize )
+		layer l = net->layers[ii];
+		if ( (l.type == DECONVOLUTIONAL || l.type == CONVOLUTIONAL) && l.batch_normalize )
 		{
 			denormalize_convolutional_layer( l );
-			net.layers[i].batch_normalize=0;
+			net->layers[ii].batch_normalize = 0;
 		}
 
 		if ( l.type == CONNECTED && l.batch_normalize )
 		{
 			denormalize_connected_layer( l );
-			net.layers[i].batch_normalize=0;
+			net->layers[ii].batch_normalize = 0;
 		}
 
 		if ( l.type == GRU && l.batch_normalize )
@@ -439,33 +492,65 @@ void denormalize_net( char *cfgfile, char *weightfile, char *outfile )
 			l.state_z_layer->batch_normalize = 0;
 			l.state_r_layer->batch_normalize = 0;
 			l.state_h_layer->batch_normalize = 0;
-			net.layers[i].batch_normalize=0;
+			net->layers[ii].batch_normalize=0;
 		}
 	}
 	save_weights( net, outfile );
 }
-// ½Å°æ¸Á °¡Áß°ªÀ» ½Ã°¢È­ÇÏ¿© º¸¿©ÁÜ
-void visualize( char *cfgfile, char *weightfile )
+// ì´ë¯¸ì§€ ë§Œë“¤ê¸°
+void mkimg( char *cfgfile, char *weightfile, int h, int w, int num, char *prefix )
 {
-	network net = parse_network_cfg( cfgfile );
+	network *net	= load_network( cfgfile, weightfile, 0 );
+	image *ims		= pull_convolutional_weights( net->layers[0] );
 
-	if ( weightfile )
+	int nn = net->layers[0].n;
+	int z;
+
+	for ( z = 0; z < num; ++z )
 	{
-		load_weights( &net, weightfile );
-	}
+		image img = make_image( h, w, 3 );
+		fill_image( img, 0.5f );
 
-	visualize_network( net );
-	#ifdef OPENCV
-	cvWaitKey( 0 );
-	#endif
+		int i;
+		for ( i = 0; i < 100; ++i )
+		{
+			image r = copy_image( ims[rand()%nn] );
+			rotate_image_cw( r, rand()%4 );
+			random_distort_image( r, 1, 1.5f, 1.5f );
+			int dx = rand()%(w-r.w);
+			int dy = rand()%(h-r.h);
+			ghost_image( r, img, dx, dy );
+			free_image( r );
+		}
+
+		char buff[256];
+		//sprintf( buff, "%s/gen_%d", prefix, z );
+		sprintf_s( buff, "%s/gen_%d", prefix, z );
+		save_image( img, buff );
+		free_image( img );
+	}
 }
 
-// argc : Argument Count	=> °áÁ¤°íÀ¯°ª °³¼ö
-// argv : Argument Vector	=> °áÁ¤°íÀ¯°ª ¹è¿­
+/*		//  [7/15/2018 jobs]
+// ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ì‹œê°í™”í•˜ì—¬ ë³´ì—¬ì¤Œ
+void visualize( char *cfgfile, char *weightfile )
+{
+	network *net = load_network( cfgfile, weightfile, 0 );
+
+	visualize_network( net );
+
+#ifdef OPENCV
+	cvWaitKey( 0 );
+#endif
+}
+*/
+
+// argc : Argument Count	=> ê²°ì •ê³ ìœ ê°’ ê°œìˆ˜
+// argv : Argument Vector	=> ê²°ì •ê³ ìœ ê°’ ë°°ì—´
 //int main()
 int main( int argc, char **argv )
 {
-	// ÀÀ¿ëÇÁ·Î±×·¥ ½ÇÇà Æú´õÀ§Ä¡ Ãâ·Â
+	// ì‘ìš©í”„ë¡œê·¸ë¨ ì‹¤í–‰ í´ë”ìœ„ì¹˜ ì¶œë ¥
 	//char *App_Home_Folder;
 	//App_Home_Folder = getcwd( NULL, 255 );
 	char App_Home_Folder[255];
@@ -474,82 +559,92 @@ int main( int argc, char **argv )
 	char *BanHwan;
 	BanHwan = _getcwd( App_Home_Folder, 255 );
 	//_getcwd( App_Home_Folder, 255 );
-	printf_s( "¼ö: %d, ÀÀ¿ëÇÁ·Î±×·¥ÀÇ ÇöÀç Æú´õÀ§Ä¡: %s\n", Su, App_Home_Folder );
+	printf_s( "ìˆ˜: %d, ì‘ìš©í”„ë¡œê·¸ë¨ì˜ í˜„ì¬ í´ë”ìœ„ì¹˜: %s\n", Su, App_Home_Folder );
 
 	//chdir( "x64" );
 	//_chdir( "x64/Debug" );
 	//BanHwan = _getcwd( App_Home_Folder, 255 );
 	//_getcwd( App_Home_Folder, 255 );
-	//printf_s( "¼ö: %d, ÀÀ¿ëÇÁ·Î±×·¥ÀÇ ÇöÀç Æú´õÀ§Ä¡: %s\n", Su, App_Home_Folder );
+	//printf_s( "ìˆ˜: %d, ì‘ìš©í”„ë¡œê·¸ë¨ì˜ í˜„ì¬ í´ë”ìœ„ì¹˜: %s\n", Su, App_Home_Folder );
 
-	// ÀÀ¿ëÇÁ·Î±×·¥ ½ÇÇà ¹æ¹ı
+	// ì‘ìš©í”„ë¡œê·¸ë¨ ì‹¤í–‰ ë°©ë²•
 	if ( argc < 2 )
 	{
 		//fprintf( stderr, "usage: %s <function>\n", argv[0] );
-		fprintf( stderr, "»ç¿ë¹æ¹ı: %s <±â´É>\n", argv[0] );
+		fprintf( stderr, "ì‚¬ìš©ë°©ë²•: %s <ê¸°ëŠ¥>\n", argv[0] );
 		return 0;
 	}
 
 	gpu_index = find_int_arg( argc, argv, "-i", 0 );
 
-	// GPU¸¦ »ç¿ëÇÏÁö ¾Ê´Â´Ù´Â °áÁ¤ÀÌ ÀÖ´ÂÁö È®ÀÎÇÑ´Ù
+	// GPUë¥¼ ì‚¬ìš©í•˜ì§€ ì•ŠëŠ”ë‹¤ëŠ” ê²°ì •ì´ ìˆëŠ”ì§€ í™•ì¸í•œë‹¤
 	if ( find_arg( argc, argv, "-nogpu" ) )
 	{
 		gpu_index = -1;
 	}
 
-	#ifndef GPU
+#ifndef GPU
 	gpu_index = -1;
-	#else
+#else
 	if ( gpu_index >= 0 )
 	{
 		cuda_set_device( gpu_index );
 	}
-	#endif
+#endif
 
-	if ( 0 == strcmp( argv[1], "average" ) )		{	average( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "yolo" ) )		{	run_yolo( argc, argv );	}
+	if		( 0 == strcmp( argv[1], "average" ) )	{	average( argc, argv );		}
+	else if ( 0 == strcmp( argv[1], "yolo" ) )		{	run_yolo( argc, argv );		}
 	else if ( 0 == strcmp( argv[1], "voxel" ) )		{	run_voxel( argc, argv );	}
 	else if ( 0 == strcmp( argv[1], "super" ) )		{	run_super( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "lsd" ) )		{	run_lsd( argc, argv );		}
 	else if ( 0 == strcmp( argv[1], "detector" ) )	{	run_detector( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "detect" ) )
-	{
-		float thresh = find_float_arg( argc, argv, "-thresh", 0.24f );
-		char *filename = (argc > 4) ? argv[4] : 0;
-														test_detector( "cfg/coco.data", argv[2], argv[3], filename, thresh );
+	else if ( 0 == strcmp( argv[1], "detect" ) )	{	run_detector( argc, argv );	}
+/*	{
+		float	thresh		= find_float_arg( argc, argv, "-thresh", 0.5f );
+		char	*filename	= (argc > 4) ? argv[4] : 0;
+		char	*outfile	= find_char_arg( argc, argv, "-out", 0 );
+		int		fullscreen	= find_arg( argc, argv, "-fullscreen" );
+		test_detector( "cfg/coco.data", argv[2], argv[3], filename, thresh, 0.5f, outfile, fullscreen );
 	}
-	else if ( 0 == strcmp( argv[1], "cifar" ) )		{	run_cifar( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "go" ) )		{	run_go( argc, argv );	}
+*/	else if ( 0 == strcmp( argv[1], "cifar" ) )		{	run_cifar( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "go" ) )		{	run_go( argc, argv );		}
 	else if ( 0 == strcmp( argv[1], "rnn" ) )		{	run_char_rnn( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "vid" ) )		{	run_vid_rnn( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "nightmare" ) )	{	run_nightmare( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "coco" ) )		{	run_coco( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "coco" ) )		{	run_coco( argc, argv );		}
 	else if ( 0 == strcmp( argv[1], "classify" ) )	{	predict_classifier( "cfg/imagenet1k.data", argv[2], argv[3], argv[4], 5 );	}
 	else if ( 0 == strcmp( argv[1], "classifier" ) ){	run_classifier( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "regressor" ) )	{	run_regressor( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "segmenter" ) )	{	run_segmenter( argc, argv );	}
 	else if ( 0 == strcmp( argv[1], "art" ) )		{	run_art( argc, argv );	}
 	else if ( 0 == strcmp( argv[1], "tag" ) )		{	run_tag( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "compare" ) )	{	run_compare( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "dice" ) )		{	run_dice( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "writing" ) )	{	run_writing( argc, argv );	}
-	else if ( 0 == strcmp( argv[1], "captcha" ) )	{	run_captcha( argc, argv );	}
 	else if ( 0 == strcmp( argv[1], "3d" ) )		{	composite_3d( argv[2], argv[3], argv[4], (argc > 5) ? atof( argv[5] ) : 0 );	}
 	else if ( 0 == strcmp( argv[1], "test" ) )		{	test_resize( argv[2] );	}
+	else if ( 0 == strcmp( argv[1], "captcha" ) )	{	run_captcha( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "nightmare" ) )	{	run_nightmare( argc, argv );	}
 	else if ( 0 == strcmp( argv[1], "rgbgr" ) )		{	rgbgr_net( argv[2], argv[3], argv[4] );	}
 	else if ( 0 == strcmp( argv[1], "reset" ) )		{	reset_normalize_net( argv[2], argv[3], argv[4] );	}
 	else if ( 0 == strcmp( argv[1], "denormalize" ) ){	denormalize_net( argv[2], argv[3], argv[4] );	}
-	else if ( 0 == strcmp( argv[1], "statistics" ) ){	statistics_net( argv[2], argv[3] );	}
-	else if ( 0 == strcmp( argv[1], "normalize" ) )	{	normalize_net( argv[2], argv[3], argv[4] );	}
-	else if ( 0 == strcmp( argv[1], "rescale" ) )	{	rescale_net( argv[2], argv[3], argv[4] );	}
+	else if ( 0 == strcmp( argv[1], "statistics" ) ){	statistics_net( argv[2], argv[3] );				}
+	else if ( 0 == strcmp( argv[1], "normalize" ) )	{	normalize_net( argv[2], argv[3], argv[4] );		}
+	else if ( 0 == strcmp( argv[1], "rescale" ) )	{	rescale_net( argv[2], argv[3], argv[4] );		}
 	else if ( 0 == strcmp( argv[1], "ops" ) )		{	operations( argv[2] );	}
 	else if ( 0 == strcmp( argv[1], "speed" ) )		{	speed( argv[2], (argc > 3 && argv[3]) ? atoi( argv[3] ) : 0 );	}
 	else if ( 0 == strcmp( argv[1], "oneoff" ) )	{	oneoff( argv[2], argv[3], argv[4] );	}
+	else if ( 0 == strcmp( argv[1], "oneoff2" ) )	{	oneoff2( argv[2], argv[3], argv[4], atoi( argv[5] ) );	}
+	else if ( 0 == strcmp( argv[1], "print" ) )		{	print_weights( argv[2], argv[3], atoi( argv[4] ) );	}
 	else if ( 0 == strcmp( argv[1], "partial" ) )	{	partial( argv[2], argv[3], argv[4], atoi( argv[5] ) );	}
-	// ½Å°æ¸Á °¡Áß°ªÀ» ½Ã°¢È­ÇÏ¿© º¸¿©ÁÜ
-	else if ( 0 == strcmp( argv[1], "visualize" ) )	{	visualize( argv[2], (argc > 3) ? argv[3] : 0 );	}
+	else if ( 0 == strcmp( argv[1], "average" ) )	{	average( argc, argv );	}
+	// ì‹ ê²½ë§ ê°€ì¤‘ê°’ì„ ì‹œê°í™”í•˜ì—¬ ë³´ì—¬ì¤Œ
+	//else if ( 0 == strcmp( argv[1], "visualize" ) )	{	visualize( argv[2], (argc > 3) ? argv[3] : 0 );	}
+	else if ( 0 == strcmp( argv[1], "visualize" ) )	{	run_visualize( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "mkimg" ) )		{	mkimg( argv[2], argv[3], atoi( argv[4] ), atoi( argv[5] ), atoi( argv[6] ), argv[7] );	}
 	else if ( 0 == strcmp( argv[1], "imtest" ) )	{	test_resize( argv[2] );	}
+	else if ( 0 == strcmp( argv[1], "compare" ) )	{	run_compare( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "dice" ) )		{	run_dice( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "writing" ) )	{	run_writing( argc, argv );	}
+	else if ( 0 == strcmp( argv[1], "vid" ) )		{	run_vid_rnn( argc, argv );	}
 	else
 	{
-		fprintf( stderr, "°áÁ¤Ç×¸ñ ±¸Çö¾ÈµÊ: %s\n", argv[1] );
+		fprintf( stderr, "ê²°ì •í•­ëª© êµ¬í˜„ì•ˆë¨: %s\n", argv[1] );
 	}
 
 	return 0;

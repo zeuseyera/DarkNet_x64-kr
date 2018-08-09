@@ -1,5 +1,5 @@
 #include "layer_activation.h"
-#include "./utils.h"
+#include "utils.h"
 #include "cuda.h"
 #include "blas.h"
 #include "gemm.h"
@@ -11,54 +11,58 @@
 
 layer make_activation_layer( int batch, int inputs, ACTIVATION activation )
 {
-	layer l = { 0 };
-	l.type		= ACTIVE;
+	layer Lyr = { 0 };
+	Lyr.type	= ACTIVE;
 
-	l.inputs	= inputs;
-	l.outputs	= inputs;
-	l.batch		= batch;
+	Lyr.inputs	= inputs;
+	Lyr.outputs	= inputs;
+	Lyr.batch		= batch;
 
-	l.output	= calloc( batch*inputs, sizeof( float* ) );
-	l.delta		= calloc( batch*inputs, sizeof( float* ) );
+	Lyr.output	= calloc( batch*inputs, sizeof( float* ) );
+	Lyr.delta	= calloc( batch*inputs, sizeof( float* ) );
 
-	l.forward	= forward_activation_layer;
-	l.backward	= backward_activation_layer;
-#ifdef GPU
-	l.forward_gpu	= forward_activation_layer_gpu;
-	l.backward_gpu	= backward_activation_layer_gpu;
+	Lyr.forward		= forward_activation_layer;
+	Lyr.backward	= backward_activation_layer;
 
-	l.output_gpu	= cuda_make_array( l.output, inputs*batch );
-	l.delta_gpu		= cuda_make_array( l.delta, inputs*batch );
-#endif
-	l.activation	= activation;
+	#ifdef GPU
+	Lyr.forward_gpu		= forward_activation_layer_gpu;
+	Lyr.backward_gpu	= backward_activation_layer_gpu;
+
+	Lyr.output_gpu	= cuda_make_array( Lyr.output, inputs*batch );
+	Lyr.delta_gpu	= cuda_make_array( Lyr.delta, inputs*batch );
+	#endif
+
+	Lyr.activation	= activation;
 
 	fprintf( stderr, "Activation Layer: %d inputs\n", inputs );
-	return l;
+
+	return Lyr;
 }
 
-void forward_activation_layer( layer l, network_state state )
+void forward_activation_layer( layer Lyr, network net )
 {
-	copy_cpu( l.outputs*l.batch, state.input, 1, l.output, 1 );
-	activate_array( l.output, l.outputs*l.batch, l.activation );
+	copy_cpu( Lyr.outputs*Lyr.batch, net.input, 1, Lyr.output, 1 );
+	activate_array( Lyr.output, Lyr.outputs*Lyr.batch, Lyr.activation );
 }
 
-void backward_activation_layer( layer l, network_state state )
+void backward_activation_layer( layer Lyr, network net )
 {
-	gradient_array( l.output, l.outputs*l.batch, l.activation, l.delta );
-	copy_cpu( l.outputs*l.batch, l.delta, 1, state.delta, 1 );
+	gradient_array( Lyr.output, Lyr.outputs*Lyr.batch, Lyr.activation, Lyr.delta );
+	copy_cpu( Lyr.outputs*Lyr.batch, Lyr.delta, 1, net.delta, 1 );
 }
 
 #ifdef GPU
 
-void forward_activation_layer_gpu( layer l, network_state state )
+void forward_activation_layer_gpu( layer Lyr, network net )
 {
-	copy_ongpu( l.outputs*l.batch, state.input, 1, l.output_gpu, 1 );
-	activate_array_ongpu( l.output_gpu, l.outputs*l.batch, l.activation );
+	copy_gpu( Lyr.outputs*Lyr.batch, net.input_gpu, 1, Lyr.output_gpu, 1 );
+	activate_array_gpu( Lyr.output_gpu, Lyr.outputs*Lyr.batch, Lyr.activation );
 }
 
-void backward_activation_layer_gpu( layer l, network_state state )
+void backward_activation_layer_gpu( layer Lyr, network net )
 {
-	gradient_array_ongpu( l.output_gpu, l.outputs*l.batch, l.activation, l.delta_gpu );
-	copy_ongpu( l.outputs*l.batch, l.delta_gpu, 1, state.delta, 1 );
+	gradient_array_gpu( Lyr.output_gpu, Lyr.outputs*Lyr.batch, Lyr.activation, Lyr.delta_gpu );
+	copy_gpu( Lyr.outputs*Lyr.batch, Lyr.delta_gpu, 1, net.delta_gpu, 1 );
 }
 #endif
+

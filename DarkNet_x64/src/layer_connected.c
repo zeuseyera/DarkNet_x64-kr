@@ -1,6 +1,7 @@
 #include "layer_connected.h"
+#include "layer_convolutional.h"
 #include "layer_batchnorm.h"
-#include "./utils.h"
+#include "utils.h"
 #include "cuda.h"
 #include "blas.h"
 #include "gemm.h"
@@ -10,339 +11,517 @@
 #include <stdlib.h>
 #include <string.h>
 
-connected_layer make_connected_layer( int batch, int inputs, int outputs
-									, ACTIVATION activation, int batch_normalize )
+layer make_connected_layer( int batch
+						, int inputs
+						, int outputs
+						, ACTIVATION activation
+						, int batch_normalize
+						, int adam )
 {
-	int i;
-	connected_layer l = { 0 };
-	l.type = CONNECTED;
+	int ii;
+	layer Lyr = { 0 };
+	Lyr.learning_rate_scale = 1;
+	Lyr.type	= CONNECTED;
 
-	l.inputs = inputs;
-	l.outputs = outputs;
-	l.batch=batch;
-	l.batch_normalize = batch_normalize;
-	l.h = 1;
-	l.w = 1;
-	l.c = inputs;
-	l.out_h = 1;
-	l.out_w = 1;
-	l.out_c = outputs;
+	Lyr.inputs	= inputs;
+	Lyr.outputs	= outputs;
+	Lyr.batch	= batch;
+	Lyr.batch_normalize = batch_normalize;
+	Lyr.h		= 1;
+	Lyr.w		= 1;
+	Lyr.c		= inputs;
+	Lyr.out_h	= 1;
+	Lyr.out_w	= 1;
+	Lyr.out_c	= outputs;
+	Lyr.nweights	= Lyr.c*Lyr.out_c;
+	Lyr.nbiases		= Lyr.out_c;
 
-	l.output = calloc( batch*outputs, sizeof( float ) );
-	l.delta = calloc( batch*outputs, sizeof( float ) );
+	Lyr.output			= calloc( batch*outputs, sizeof( float ) );
+	Lyr.delta			= calloc( batch*outputs, sizeof( float ) );
 
-	l.weight_updates = calloc( inputs*outputs, sizeof( float ) );
-	l.bias_updates = calloc( outputs, sizeof( float ) );
+	Lyr.weight_updates	= calloc( inputs*outputs, sizeof( float ) );
+	Lyr.bias_updates	= calloc( outputs, sizeof( float ) );
 
-	l.weights = calloc( outputs*inputs, sizeof( float ) );
-	l.biases = calloc( outputs, sizeof( float ) );
+	Lyr.weights			= calloc( outputs*inputs, sizeof( float ) );
+	Lyr.biases			= calloc( outputs, sizeof( float ) );
 
-	l.forward = forward_connected_layer;
-	l.backward = backward_connected_layer;
-	l.update = update_connected_layer;
+	Lyr.forward			= forward_connected_layer;
+	Lyr.backward		= backward_connected_layer;
+	Lyr.update			= update_connected_layer;
+	Lyr.BoJa_NaOnGab	= visualize_connected_layer_output;
+	Lyr.BoJa_MuGeGab	= visualize_connected_layer_weight;
 
-	//float scale = 1./sqrt(inputs);
-	float scale = sqrt( 2./inputs );
-	for ( i = 0; i < outputs*inputs; ++i )
+	//float scale = 1.0/sqrt(inputs);
+	float scale = sqrt( 2.0/inputs );
+	for ( ii=0; ii < outputs*inputs; ++ii )
 	{
-		l.weights[i] = scale*rand_uniform( -1, 1 );
+		Lyr.weights[ii] = scale*rand_uniform( -1, 1 );
 	}
 
-	for ( i = 0; i < outputs; ++i )
+	for ( ii=0; ii < outputs; ++ii )
 	{
-		l.biases[i] = 0;
+		Lyr.biases[ii] = 0;
+	}
+
+	if ( adam )
+	{
+		Lyr.m		= calloc( Lyr.inputs*Lyr.outputs, sizeof( float ) );
+		Lyr.v		= calloc( Lyr.inputs*Lyr.outputs, sizeof( float ) );
+		Lyr.bias_m	= calloc( Lyr.outputs, sizeof( float ) );
+		Lyr.scale_m	= calloc( Lyr.outputs, sizeof( float ) );
+		Lyr.bias_v	= calloc( Lyr.outputs, sizeof( float ) );
+		Lyr.scale_v	= calloc( Lyr.outputs, sizeof( float ) );
 	}
 
 	if ( batch_normalize )
 	{
-		l.scales = calloc( outputs, sizeof( float ) );
-		l.scale_updates = calloc( outputs, sizeof( float ) );
-		for ( i = 0; i < outputs; ++i )
+		Lyr.scales			= calloc( outputs, sizeof( float ) );
+		Lyr.scale_updates	= calloc( outputs, sizeof( float ) );
+
+		for ( ii=0; ii < outputs; ++ii )
 		{
-			l.scales[i] = 1;
+			Lyr.scales[ii] = 1;
 		}
 
-		l.mean = calloc( outputs, sizeof( float ) );
-		l.mean_delta = calloc( outputs, sizeof( float ) );
-		l.variance = calloc( outputs, sizeof( float ) );
-		l.variance_delta = calloc( outputs, sizeof( float ) );
+		Lyr.mean			= calloc( outputs, sizeof( float ) );
+		Lyr.mean_delta		= calloc( outputs, sizeof( float ) );
+		Lyr.variance		= calloc( outputs, sizeof( float ) );
+		Lyr.variance_delta	= calloc( outputs, sizeof( float ) );
 
-		l.rolling_mean = calloc( outputs, sizeof( float ) );
-		l.rolling_variance = calloc( outputs, sizeof( float ) );
+		Lyr.rolling_mean	= calloc( outputs, sizeof( float ) );
+		Lyr.rolling_variance = calloc( outputs, sizeof( float ) );
 
-		l.x = calloc( batch*outputs, sizeof( float ) );
-		l.x_norm = calloc( batch*outputs, sizeof( float ) );
+		Lyr.x				= calloc( batch*outputs, sizeof( float ) );
+		Lyr.x_norm			= calloc( batch*outputs, sizeof( float ) );
 	}
 
 	#ifdef GPU
-	l.forward_gpu = forward_connected_layer_gpu;
-	l.backward_gpu = backward_connected_layer_gpu;
-	l.update_gpu = update_connected_layer_gpu;
+	Lyr.forward_gpu			= forward_connected_layer_gpu;
+	Lyr.backward_gpu		= backward_connected_layer_gpu;
+	Lyr.update_gpu			= update_connected_layer_gpu;
 
-	l.weights_gpu = cuda_make_array( l.weights, outputs*inputs );
-	l.biases_gpu = cuda_make_array( l.biases, outputs );
+	Lyr.weights_gpu			= cuda_make_array( Lyr.weights, outputs*inputs );
+	Lyr.biases_gpu			= cuda_make_array( Lyr.biases, outputs );
 
-	l.weight_updates_gpu = cuda_make_array( l.weight_updates, outputs*inputs );
-	l.bias_updates_gpu = cuda_make_array( l.bias_updates, outputs );
+	Lyr.weight_updates_gpu	= cuda_make_array( Lyr.weight_updates, outputs*inputs );
+	Lyr.bias_updates_gpu	= cuda_make_array( Lyr.bias_updates, outputs );
 
-	l.output_gpu = cuda_make_array( l.output, outputs*batch );
-	l.delta_gpu = cuda_make_array( l.delta, outputs*batch );
+	Lyr.output_gpu			= cuda_make_array( Lyr.output, outputs*batch );
+	Lyr.delta_gpu			= cuda_make_array( Lyr.delta, outputs*batch );
+
+	if ( adam )
+	{
+		Lyr.m_gpu			= cuda_make_array( 0, inputs*outputs );
+		Lyr.v_gpu			= cuda_make_array( 0, inputs*outputs );
+		Lyr.bias_m_gpu		= cuda_make_array( 0, outputs );
+		Lyr.bias_v_gpu		= cuda_make_array( 0, outputs );
+		Lyr.scale_m_gpu		= cuda_make_array( 0, outputs );
+		Lyr.scale_v_gpu		= cuda_make_array( 0, outputs );
+	}
+
 	if ( batch_normalize )
 	{
-		l.scales_gpu = cuda_make_array( l.scales, outputs );
-		l.scale_updates_gpu = cuda_make_array( l.scale_updates, outputs );
+		Lyr.mean_gpu			= cuda_make_array( Lyr.mean, outputs );
+		Lyr.variance_gpu		= cuda_make_array( Lyr.variance, outputs );
 
-		l.mean_gpu = cuda_make_array( l.mean, outputs );
-		l.variance_gpu = cuda_make_array( l.variance, outputs );
+		Lyr.rolling_mean_gpu	= cuda_make_array( Lyr.mean, outputs );
+		Lyr.rolling_variance_gpu = cuda_make_array( Lyr.variance, outputs );
 
-		l.rolling_mean_gpu = cuda_make_array( l.mean, outputs );
-		l.rolling_variance_gpu = cuda_make_array( l.variance, outputs );
+		Lyr.mean_delta_gpu		= cuda_make_array( Lyr.mean, outputs );
+		Lyr.variance_delta_gpu	= cuda_make_array( Lyr.variance, outputs );
 
-		l.mean_delta_gpu = cuda_make_array( l.mean, outputs );
-		l.variance_delta_gpu = cuda_make_array( l.variance, outputs );
+		Lyr.scales_gpu			= cuda_make_array( Lyr.scales, outputs );
+		Lyr.scale_updates_gpu	= cuda_make_array( Lyr.scale_updates, outputs );
 
-		l.x_gpu = cuda_make_array( l.output, l.batch*outputs );
-		l.x_norm_gpu = cuda_make_array( l.output, l.batch*outputs );
+		Lyr.x_gpu				= cuda_make_array( Lyr.output, Lyr.batch*outputs );
+		Lyr.x_norm_gpu			= cuda_make_array( Lyr.output, Lyr.batch*outputs );
+
+		#ifdef CUDNN
+		cudnnCreateTensorDescriptor( &Lyr.normTensorDesc );
+		cudnnCreateTensorDescriptor( &Lyr.dstTensorDesc );
+		cudnnSetTensor4dDescriptor( Lyr.dstTensorDesc
+								, CUDNN_TENSOR_NCHW
+								, CUDNN_DATA_FLOAT
+								, Lyr.batch
+								, Lyr.out_c
+								, Lyr.out_h
+								, Lyr.out_w );
+		cudnnSetTensor4dDescriptor( Lyr.normTensorDesc
+								, CUDNN_TENSOR_NCHW
+								, CUDNN_DATA_FLOAT
+								, 1
+								, Lyr.out_c
+								, 1
+								, 1 );
+		#endif
 	}
 	#endif
-	l.activation = activation;
+
+	Lyr.activation = activation;
 	fprintf( stderr, "connected                            %4d  ->  %4d\n", inputs, outputs );
-	return l;
+
+	return Lyr;
 }
 
-void update_connected_layer( connected_layer l, int batch, float learning_rate, float momentum, float decay )
+void update_connected_layer( layer Lyr, update_args a )
 {
-	axpy_cpu( l.outputs, learning_rate/batch, l.bias_updates, 1, l.biases, 1 );
-	scal_cpu( l.outputs, momentum, l.bias_updates, 1 );
+	float learning_rate = a.learning_rate*Lyr.learning_rate_scale;
+	float momentum	= a.momentum;
+	float decay		= a.decay;
+	int batch		= a.batch;
 
-	if ( l.batch_normalize )
+	axpy_cpu( Lyr.outputs, learning_rate/batch, Lyr.bias_updates, 1, Lyr.biases, 1 );
+	scal_cpu( Lyr.outputs, momentum, Lyr.bias_updates, 1 );
+
+	if ( Lyr.batch_normalize )
 	{
-		axpy_cpu( l.outputs, learning_rate/batch, l.scale_updates, 1, l.scales, 1 );
-		scal_cpu( l.outputs, momentum, l.scale_updates, 1 );
+		axpy_cpu( Lyr.outputs, learning_rate/batch, Lyr.scale_updates, 1, Lyr.scales, 1 );
+		scal_cpu( Lyr.outputs, momentum, Lyr.scale_updates, 1 );
 	}
 
-	axpy_cpu( l.inputs*l.outputs, -decay*batch, l.weights, 1, l.weight_updates, 1 );
-	axpy_cpu( l.inputs*l.outputs, learning_rate/batch, l.weight_updates, 1, l.weights, 1 );
-	scal_cpu( l.inputs*l.outputs, momentum, l.weight_updates, 1 );
+	axpy_cpu( Lyr.inputs*Lyr.outputs, -decay*batch, Lyr.weights, 1, Lyr.weight_updates, 1 );
+	axpy_cpu( Lyr.inputs*Lyr.outputs, learning_rate/batch, Lyr.weight_updates, 1, Lyr.weights, 1 );
+	scal_cpu( Lyr.inputs*Lyr.outputs, momentum, Lyr.weight_updates, 1 );
 }
 
-void forward_connected_layer( connected_layer l, network_state state )
+void forward_connected_layer( layer Lyr, network net )
 {
-	int i;
-	fill_cpu( l.outputs*l.batch, 0, l.output, 1 );
-	int m = l.batch;
-	int k = l.inputs;
-	int n = l.outputs;
-	float *a = state.input;
-	float *b = l.weights;
-	float *c = l.output;
+	fill_cpu( Lyr.outputs*Lyr.batch, 0, Lyr.output, 1 );
+
+	int m		= Lyr.batch;
+	int k		= Lyr.inputs;
+	int n		= Lyr.outputs;
+	float *a	= net.input;
+	float *b	= Lyr.weights;
+	float *c	= Lyr.output;
+
 	gemm( 0, 1, m, n, k, 1, a, k, b, k, 1, c, n );
-	if ( l.batch_normalize )
-	{
-		if ( state.train )
-		{
-			mean_cpu( l.output, l.batch, l.outputs, 1, l.mean );
-			variance_cpu( l.output, l.mean, l.batch, l.outputs, 1, l.variance );
 
-			scal_cpu( l.outputs, .95, l.rolling_mean, 1 );
-			axpy_cpu( l.outputs, .05, l.mean, 1, l.rolling_mean, 1 );
-			scal_cpu( l.outputs, .95, l.rolling_variance, 1 );
-			axpy_cpu( l.outputs, .05, l.variance, 1, l.rolling_variance, 1 );
-
-			copy_cpu( l.outputs*l.batch, l.output, 1, l.x, 1 );
-			normalize_cpu( l.output, l.mean, l.variance, l.batch, l.outputs, 1 );
-			copy_cpu( l.outputs*l.batch, l.output, 1, l.x_norm, 1 );
-		}
-		else
-		{
-			normalize_cpu( l.output, l.rolling_mean, l.rolling_variance, l.batch, l.outputs, 1 );
-		}
-		scale_bias( l.output, l.scales, l.batch, l.outputs, 1 );
-	}
-	for ( i = 0; i < l.batch; ++i )
+	if ( Lyr.batch_normalize )
 	{
-		axpy_cpu( l.outputs, 1, l.biases, 1, l.output + i*l.outputs, 1 );
+		forward_batchnorm_layer( Lyr, net );
 	}
-	activate_array( l.output, l.outputs*l.batch, l.activation );
+	else
+	{
+		add_bias( Lyr.output, Lyr.biases, Lyr.batch, Lyr.outputs, 1 );
+	}
+
+	activate_array( Lyr.output, Lyr.outputs*Lyr.batch, Lyr.activation );
 }
 
-void backward_connected_layer( connected_layer l, network_state state )
+void backward_connected_layer( layer Lyr, network net )
 {
-	int i;
-	gradient_array( l.output, l.outputs*l.batch, l.activation, l.delta );
-	for ( i = 0; i < l.batch; ++i )
+	gradient_array( Lyr.output, Lyr.outputs*Lyr.batch, Lyr.activation, Lyr.delta );
+
+	if ( Lyr.batch_normalize )
 	{
-		axpy_cpu( l.outputs, 1, l.delta + i*l.outputs, 1, l.bias_updates, 1 );
+		backward_batchnorm_layer( Lyr, net );
 	}
-	if ( l.batch_normalize )
+	else
 	{
-		backward_scale_cpu( l.x_norm, l.delta, l.batch, l.outputs, 1, l.scale_updates );
-
-		scale_bias( l.delta, l.scales, l.batch, l.outputs, 1 );
-
-		mean_delta_cpu( l.delta, l.variance, l.batch, l.outputs, 1, l.mean_delta );
-		variance_delta_cpu( l.x, l.delta, l.mean, l.variance, l.batch, l.outputs, 1, l.variance_delta );
-		normalize_delta_cpu( l.x, l.mean, l.variance, l.mean_delta, l.variance_delta, l.batch, l.outputs, 1, l.delta );
+		backward_bias( Lyr.bias_updates, Lyr.delta, Lyr.batch, Lyr.outputs, 1 );
 	}
 
-	int m = l.outputs;
-	int k = l.batch;
-	int n = l.inputs;
-	float *a = l.delta;
-	float *b = state.input;
-	float *c = l.weight_updates;
+	int m		= Lyr.outputs;
+	int k		= Lyr.batch;
+	int n		= Lyr.inputs;
+	float *a	= Lyr.delta;
+	float *b	= net.input;
+	float *c	= Lyr.weight_updates;
+
 	gemm( 1, 0, m, n, k, 1, a, m, b, n, 1, c, n );
 
-	m = l.batch;
-	k = l.outputs;
-	n = l.inputs;
+	m = Lyr.batch;
+	k = Lyr.outputs;
+	n = Lyr.inputs;
 
-	a = l.delta;
-	b = l.weights;
-	c = state.delta;
+	a = Lyr.delta;
+	b = Lyr.weights;
+	c = net.delta;
 
 	if ( c ) gemm( 0, 0, m, n, k, 1, a, k, b, n, 1, c, n );
 }
 
 
-void denormalize_connected_layer( layer l )
+void denormalize_connected_layer( layer Lyr )
 {
 	int i, j;
-	for ( i = 0; i < l.outputs; ++i )
+	for ( i = 0; i < Lyr.outputs; ++i )
 	{
-		float scale = l.scales[i]/sqrt( l.rolling_variance[i] + .000001 );
-		for ( j = 0; j < l.inputs; ++j )
+		float scale = Lyr.scales[i]/sqrt( Lyr.rolling_variance[i] + 0.000001 );
+
+		for ( j = 0; j < Lyr.inputs; ++j )
 		{
-			l.weights[i*l.inputs + j] *= scale;
+			Lyr.weights[i*Lyr.inputs + j] *= scale;
 		}
-		l.biases[i] -= l.rolling_mean[i] * scale;
-		l.scales[i] = 1;
-		l.rolling_mean[i] = 0;
-		l.rolling_variance[i] = 1;
+
+		Lyr.biases[i] -= Lyr.rolling_mean[i] * scale;
+		Lyr.scales[i] = 1;
+		Lyr.rolling_mean[i] = 0;
+		Lyr.rolling_variance[i] = 1;
 	}
 }
 
 
-void statistics_connected_layer( layer l )
+void statistics_connected_layer( layer Lyr )
 {
-	if ( l.batch_normalize )
+	if ( Lyr.batch_normalize )
 	{
 		printf( "Scales " );
-		print_statistics( l.scales, l.outputs );
+		print_statistics( Lyr.scales, Lyr.outputs );
 		/*
-		printf("Rolling Mean ");
-		print_statistics(l.rolling_mean, l.outputs);
-		printf("Rolling Variance ");
-		print_statistics(l.rolling_variance, l.outputs);
+		printf( "Rolling Mean " );
+		print_statistics( Lyr.rolling_mean, Lyr.outputs );
+		printf( "Rolling Variance " );
+		print_statistics( Lyr.rolling_variance, Lyr.outputs );
 		*/
 	}
+
 	printf( "Biases " );
-	print_statistics( l.biases, l.outputs );
+	print_statistics( Lyr.biases, Lyr.outputs );
 	printf( "Weights " );
-	print_statistics( l.weights, l.outputs );
+	print_statistics( Lyr.weights, Lyr.outputs );
 }
 
 #ifdef GPU
 
-void pull_connected_layer( connected_layer l )
+void pull_connected_layer( layer Lyr )
 {
-	cuda_pull_array( l.weights_gpu, l.weights, l.inputs*l.outputs );
-	cuda_pull_array( l.biases_gpu, l.biases, l.outputs );
-	cuda_pull_array( l.weight_updates_gpu, l.weight_updates, l.inputs*l.outputs );
-	cuda_pull_array( l.bias_updates_gpu, l.bias_updates, l.outputs );
-	if ( l.batch_normalize )
+	cuda_pull_array( Lyr.weights_gpu, Lyr.weights, Lyr.inputs*Lyr.outputs );
+	cuda_pull_array( Lyr.biases_gpu, Lyr.biases, Lyr.outputs );
+	cuda_pull_array( Lyr.weight_updates_gpu, Lyr.weight_updates, Lyr.inputs*Lyr.outputs );
+	cuda_pull_array( Lyr.bias_updates_gpu, Lyr.bias_updates, Lyr.outputs );
+	if ( Lyr.batch_normalize )
 	{
-		cuda_pull_array( l.scales_gpu, l.scales, l.outputs );
-		cuda_pull_array( l.rolling_mean_gpu, l.rolling_mean, l.outputs );
-		cuda_pull_array( l.rolling_variance_gpu, l.rolling_variance, l.outputs );
+		cuda_pull_array( Lyr.scales_gpu, Lyr.scales, Lyr.outputs );
+		cuda_pull_array( Lyr.rolling_mean_gpu, Lyr.rolling_mean, Lyr.outputs );
+		cuda_pull_array( Lyr.rolling_variance_gpu, Lyr.rolling_variance, Lyr.outputs );
 	}
 }
 
-void push_connected_layer( connected_layer l )
+void push_connected_layer( layer Lyr )
 {
-	cuda_push_array( l.weights_gpu, l.weights, l.inputs*l.outputs );
-	cuda_push_array( l.biases_gpu, l.biases, l.outputs );
-	cuda_push_array( l.weight_updates_gpu, l.weight_updates, l.inputs*l.outputs );
-	cuda_push_array( l.bias_updates_gpu, l.bias_updates, l.outputs );
-	if ( l.batch_normalize )
+	cuda_push_array( Lyr.weights_gpu, Lyr.weights, Lyr.inputs*Lyr.outputs );
+	cuda_push_array( Lyr.biases_gpu, Lyr.biases, Lyr.outputs );
+	cuda_push_array( Lyr.weight_updates_gpu, Lyr.weight_updates, Lyr.inputs*Lyr.outputs );
+	cuda_push_array( Lyr.bias_updates_gpu, Lyr.bias_updates, Lyr.outputs );
+	if ( Lyr.batch_normalize )
 	{
-		cuda_push_array( l.scales_gpu, l.scales, l.outputs );
-		cuda_push_array( l.rolling_mean_gpu, l.rolling_mean, l.outputs );
-		cuda_push_array( l.rolling_variance_gpu, l.rolling_variance, l.outputs );
+		cuda_push_array( Lyr.scales_gpu, Lyr.scales, Lyr.outputs );
+		cuda_push_array( Lyr.rolling_mean_gpu, Lyr.rolling_mean, Lyr.outputs );
+		cuda_push_array( Lyr.rolling_variance_gpu, Lyr.rolling_variance, Lyr.outputs );
 	}
 }
 
-void update_connected_layer_gpu( connected_layer l, int batch
-								, float learning_rate, float momentum, float decay )
+void update_connected_layer_gpu( layer Lyr, update_args a )
 {
-	axpy_ongpu( l.outputs, learning_rate/batch, l.bias_updates_gpu, 1, l.biases_gpu, 1 );
-	scal_ongpu( l.outputs, momentum, l.bias_updates_gpu, 1 );
+	float learning_rate	= a.learning_rate*Lyr.learning_rate_scale;
+	float momentum		= a.momentum;
+	float decay			= a.decay;
+	int batch			= a.batch;
 
-	if ( l.batch_normalize )
+	if ( a.adam )
 	{
-		axpy_ongpu( l.outputs, learning_rate/batch, l.scale_updates_gpu, 1, l.scales_gpu, 1 );
-		scal_ongpu( l.outputs, momentum, l.scale_updates_gpu, 1 );
-	}
+		adam_update_gpu( Lyr.weights_gpu
+					, Lyr.weight_updates_gpu
+					, Lyr.m_gpu
+					, Lyr.v_gpu
+					, a.B1
+					, a.B2
+					, a.eps
+					, decay
+					, learning_rate
+					, Lyr.inputs*Lyr.outputs
+					, batch
+					, a.t );
+		adam_update_gpu( Lyr.biases_gpu
+					, Lyr.bias_updates_gpu
+					, Lyr.bias_m_gpu
+					, Lyr.bias_v_gpu
+					, a.B1
+					, a.B2
+					, a.eps
+					, decay
+					, learning_rate
+					, Lyr.outputs
+					, batch
+					, a.t );
 
-	axpy_ongpu( l.inputs*l.outputs, -decay*batch, l.weights_gpu, 1, l.weight_updates_gpu, 1 );
-	axpy_ongpu( l.inputs*l.outputs, learning_rate/batch, l.weight_updates_gpu, 1, l.weights_gpu, 1 );
-	scal_ongpu( l.inputs*l.outputs, momentum, l.weight_updates_gpu, 1 );
+		if ( Lyr.scales_gpu )
+		{
+			adam_update_gpu( Lyr.scales_gpu
+					, Lyr.scale_updates_gpu
+					, Lyr.scale_m_gpu
+					, Lyr.scale_v_gpu
+					, a.B1
+					, a.B2
+					, a.eps
+					, decay
+					, learning_rate
+					, Lyr.outputs
+					, batch
+					, a.t );
+		}
+	}
+	else
+	{
+		axpy_gpu( Lyr.outputs, learning_rate/batch, Lyr.bias_updates_gpu, 1, Lyr.biases_gpu, 1 );
+		scal_gpu( Lyr.outputs, momentum, Lyr.bias_updates_gpu, 1 );
+
+		if ( Lyr.batch_normalize )
+		{
+			axpy_gpu( Lyr.outputs, learning_rate/batch, Lyr.scale_updates_gpu, 1, Lyr.scales_gpu, 1 );
+			scal_gpu( Lyr.outputs, momentum, Lyr.scale_updates_gpu, 1 );
+		}
+
+		axpy_gpu( Lyr.inputs*Lyr.outputs, -decay*batch, Lyr.weights_gpu, 1, Lyr.weight_updates_gpu, 1 );
+		axpy_gpu( Lyr.inputs*Lyr.outputs, learning_rate/batch, Lyr.weight_updates_gpu, 1, Lyr.weights_gpu, 1 );
+		scal_gpu( Lyr.inputs*Lyr.outputs, momentum, Lyr.weight_updates_gpu, 1 );
+	}
 }
 
-void forward_connected_layer_gpu( connected_layer l, network_state state )
+void forward_connected_layer_gpu( layer Lyr, network net )
 {
-	int i;
-	fill_ongpu( l.outputs*l.batch, 0, l.output_gpu, 1 );
+	fill_gpu( Lyr.outputs*Lyr.batch, 0, Lyr.output_gpu, 1 );
 
-	int m = l.batch;
-	int k = l.inputs;
-	int n = l.outputs;
-	float * a = state.input;
-	float * b = l.weights_gpu;
-	float * c = l.output_gpu;
-	gemm_ongpu( 0, 1, m, n, k, 1, a, k, b, k, 1, c, n );
-	if ( l.batch_normalize )
+	int m = Lyr.batch;
+	int k = Lyr.inputs;
+	int n = Lyr.outputs;
+	float * a = net.input_gpu;
+	float * b = Lyr.weights_gpu;
+	float * c = Lyr.output_gpu;
+
+	gemm_gpu( 0, 1, m, n, k, 1, a, k, b, k, 1, c, n );
+
+	if ( Lyr.batch_normalize )
 	{
-		forward_batchnorm_layer_gpu( l, state );
+		forward_batchnorm_layer_gpu( Lyr, net );
 	}
-	for ( i = 0; i < l.batch; ++i )
+	else
 	{
-		axpy_ongpu( l.outputs, 1, l.biases_gpu, 1, l.output_gpu + i*l.outputs, 1 );
+		add_bias_gpu( Lyr.output_gpu, Lyr.biases_gpu, Lyr.batch, Lyr.outputs, 1 );
 	}
-	activate_array_ongpu( l.output_gpu, l.outputs*l.batch, l.activation );
+
+	activate_array_gpu( Lyr.output_gpu, Lyr.outputs*Lyr.batch, Lyr.activation );
 }
 
-void backward_connected_layer_gpu( connected_layer l, network_state state )
+void backward_connected_layer_gpu( layer Lyr, network net )
 {
-	int i;
-	constrain_ongpu( l.outputs*l.batch, 1, l.delta_gpu, 1 );
-	gradient_array_ongpu( l.output_gpu, l.outputs*l.batch, l.activation, l.delta_gpu );
-	for ( i = 0; i < l.batch; ++i )
+	constrain_gpu( Lyr.outputs*Lyr.batch, 1, Lyr.delta_gpu, 1 );
+	gradient_array_gpu( Lyr.output_gpu, Lyr.outputs*Lyr.batch, Lyr.activation, Lyr.delta_gpu );
+
+	if ( Lyr.batch_normalize )
 	{
-		axpy_ongpu( l.outputs, 1, l.delta_gpu + i*l.outputs, 1, l.bias_updates_gpu, 1 );
+		backward_batchnorm_layer_gpu( Lyr, net );
+	}
+	else
+	{
+		backward_bias_gpu( Lyr.bias_updates_gpu, Lyr.delta_gpu, Lyr.batch, Lyr.outputs, 1 );
 	}
 
-	if ( l.batch_normalize )
-	{
-		backward_batchnorm_layer_gpu( l, state );
-	}
+	int m = Lyr.outputs;
+	int k = Lyr.batch;
+	int n = Lyr.inputs;
+	float * a = Lyr.delta_gpu;
+	float * b = net.input_gpu;
+	float * c = Lyr.weight_updates_gpu;
 
-	int m = l.outputs;
-	int k = l.batch;
-	int n = l.inputs;
-	float * a = l.delta_gpu;
-	float * b = state.input;
-	float * c = l.weight_updates_gpu;
-	gemm_ongpu( 1, 0, m, n, k, 1, a, m, b, n, 1, c, n );
+	gemm_gpu( 1, 0, m, n, k, 1, a, m, b, n, 1, c, n );
 
-	m = l.batch;
-	k = l.outputs;
-	n = l.inputs;
+	m = Lyr.batch;
+	k = Lyr.outputs;
+	n = Lyr.inputs;
 
-	a = l.delta_gpu;
-	b = l.weights_gpu;
-	c = state.delta;
+	a = Lyr.delta_gpu;
+	b = Lyr.weights_gpu;
+	c = net.delta_gpu;
 
-	if ( c ) gemm_ongpu( 0, 0, m, n, k, 1, a, k, b, n, 1, c, n );
+	if ( c ) gemm_gpu( 0, 0, m, n, k, 1, a, k, b, n, 1, c, n );
 }
+
+// 하나의 포집가중값 주소를 이미지배열에 주소를 복사함
+image pull_connected_weight( layer Lyr, int nn )
+{
+	int hh = Lyr.h;			// 포집 높이
+	int ww = Lyr.w;			// 포집 너비
+	int cc = Lyr.c / (Lyr.groups > 0 ? Lyr.groups : Lyr.c);	// 사비개수
+	return float_to_image( ww, hh, cc, Lyr.weights + nn*hh*ww*cc );
+}
+// 메모리를 할당하고 할당한 메모리에 가중값을 복사한다
+image *pull_connected_image_weights( layer Lyr )
+{
+	image *weights	= calloc( Lyr.nweights, sizeof( image ) );	// 포집판 개수만큼 이미지메모리 할당
+
+	int ii;
+	// 포집판 개수 반복
+	for ( ii=0; ii < Lyr.nweights; ++ii )
+	{
+		// 담아둘 메모리를 할당하고, 자료값을 복사하고, 담아둔 주소를 반환한다
+		weights[ii] = copy_image( pull_connected_weight( Lyr, ii ) );
+		//normalize_image( weights[ii] );	//포집판별로 고르기를 하면 특징표현이 되는가???
+	}
+
+	normalize_image_MuRi( weights, Lyr.nweights );	//이미지무리 전체를 고르기한다
+
+	return weights;
+}
+// 연결층 가중값 시각화
+image *visualize_connected_layer_weight( layer Lyr, char *window, image *prev_weights )
+{
+	// 포집판 개수만큼 이미지메모리를 할당하고 담아둔 주소를 복사한다
+	image *single_weights = pull_connected_image_weights( Lyr );
+	show_images( single_weights, Lyr.nweights, window );
+
+	char buff[256];
+	//sprintf(buff
+	sprintf_s( buff, 256
+		, "%s: Output"
+		, window );
+
+	//show_image(dc, buff);
+	//save_image(dc, buff);
+	//free_image( dc );		//  [7/6/2018 jobs]
+	return single_weights;
+}
+// 하나의 나온값 주소를 이미지배열에 주소를 복사함
+image pull_connected_out( layer Lyr, int nn )
+{
+	int ww = Lyr.out_w;		// 출력 너비
+	int hh = Lyr.out_h;		// 출력 높이
+	int cc = 1;				// 
+	int bo = ww*hh*nn;		// 출력장수 보
+	return float_to_image( ww, hh, cc, Lyr.output + bo );
+}
+// 메모리를 할당하고 할당한 메모리에 나온값을 복사한다
+image *pull_connected_image_out( layer Lyr )
+{
+	image *out = calloc( Lyr.outputs, sizeof( image ) );	// 포집판 개수만큼 이미지메모리 할당
+
+	int ii;
+	// 나온이미지 판개수 반복
+	for ( ii=0; ii < Lyr.out_c; ++ii )
+	{
+		// 담아둘 메모리를 할당하고, 자료값을 복사하고, 담아둔 주소를 반환한다
+		out[ii] = copy_image( pull_connected_out( Lyr, ii ) );
+	}
+
+	normalize_image_MuRi( out, Lyr.outputs );	//이미지무리 전체를 고르기한다
+
+	return out;
+}
+// 연결층 나온값 시각화
+image *visualize_connected_layer_output( layer Lyr, char *window, image *prev_out )
+{
+	// 포집판 개수만큼 이미지메모리를 할당하고 담아둔 주소를 복사한다
+	image *single_out = pull_connected_image_out( Lyr );
+	// 이미지를 정사각형으로 배열을 조정하고 화면에 보여준다
+	show_images( single_out, Lyr.outputs, window );
+
+	char buff[256];
+
+	sprintf_s( buff, 256, "%s: Output", window );
+
+	return single_out;
+}
+
 #endif

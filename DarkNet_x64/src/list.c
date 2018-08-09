@@ -2,127 +2,110 @@
 #include <string.h>
 #include "list.h"
 
+// 목록구조의 메모리를 할당한다
 list *make_list()
 {
-	list *l = malloc( sizeof(list) );
-	l->size = 0;
-	l->front = 0;
-	l->back = 0;
-	return l;
+	list *Lst = malloc( sizeof( list ) );
+	Lst->size = 0;
+	Lst->front = 0;
+	Lst->back = 0;
+
+	return Lst;
 }
 
 /*
 void transfer_node(list *s, list *d, node *n)
 {
-    node *prev, *next;
-    prev = n->prev;
-    next = n->next;
-    if(prev) prev->next = next;
-    if(next) next->prev = prev;
-    --s->size;
-    if(s->front == n) s->front = next;
-    if(s->back == n) s->back = prev;
+	node *prev, *next;
+	prev = n->prev;
+	next = n->next;
+	if(prev) prev->next = next;
+	if(next) next->prev = prev;
+	--s->size;
+	if(s->front == n) s->front = next;
+	if(s->back == n) s->back = prev;
 }
 */
 
-void *list_pop( list *l )
+void *list_pop( list *Lst )
 {
-    if( !l->back ) return 0;
+	if ( !Lst->back ) return 0;
 
-    node *b = l->back;
-    void *val = b->val;
-    l->back = b->prev;
+	node *MaDi	= Lst->back;
+	void *val	= MaDi->val;
+	Lst->back	= MaDi->prev;
 
-    if( l->back )
-		l->back->next = 0;
+	if ( Lst->back )
+		Lst->back->next = 0;
 
-    free(b);
-    --l->size;
-    
-    return val;
+	free( MaDi );
+
+	--Lst->size;
+
+	return val;
 }
 // 목록의 새로운 마디를 생성하고 값을 할당한다
-void list_insert( list *MogRog, void *Gab )
+void list_insert( list *Lst, void *val )
 {
-	// 목록의 새로운 마디를 생성한다
-	node *SaeMaDi = malloc( sizeof(node) );
-	SaeMaDi->val = Gab;	// 목록의 값
-	SaeMaDi->next = 0;
+	node *MaDi	= malloc( sizeof( node ) );
+	MaDi->val	= val;	// 목록의 값
+	MaDi->next	= 0;
 
-	if( !MogRog->back )
+	if ( !Lst->back )
 	{
-		MogRog->front = SaeMaDi;	// 제일 첫번째 목록
-		SaeMaDi->prev = 0;
+		Lst->front	= MaDi;	// 제일 첫번째 목록
+		MaDi->prev	= 0;
 	}
 	else
 	{
-		MogRog->back->next = SaeMaDi;	
-		SaeMaDi->prev = MogRog->back;
+		Lst->back->next	= MaDi;
+		MaDi->prev		= Lst->back;
 	}
 
-	MogRog->back = SaeMaDi;	// 추가한 목록을 할당한다
-	++MogRog->size;
+	Lst->back = MaDi;	// 추가한 목록을 할당한다
+	++Lst->size;
 }
-
-void free_node( node *n )
+// 마디 할당메모리 해제
+void free_node( node *MaDi )
 {
-	node *next;
+	node *DaEum;
 
-	while( n )
+	while ( MaDi )
 	{
-		next = n->next;
-		free( n );
-		n = next;
+		DaEum = MaDi->next;
+		free( MaDi );
+		MaDi = DaEum;
 	}
 }
-
-void free_list( list *l )
+// 목록 할당메모리 해제
+void free_list( list *Lst )
 {
-	free_node( l->front );
-	free( l );
+	free_node( Lst->front );
+	free( Lst );
 }
-
-void free_list_contents( list *l )
+// 목록내용 할당메모리 해제
+void free_list_contents( list *Lst )
 {
-	node *n = l->front;
+	node *Jeon = Lst->front;
 
-	while( n )
+	while ( Jeon )
 	{
-		free( n->val );
-		n = n->next;
+		free( Jeon->val );
+		Jeon = Jeon->next;
 	}
 }
-// 목록으로 값에 대한 메모리를 할당하고 값을 추출한다
-void **list_to_array( list *l )
+// 목록 배열메모리 할당
+void **list_to_array( list *Lst )
 {
-    void **a = calloc( l->size, sizeof(void*) );
-    int count = 0;
-    node *n = l->front;
+	void **Sae	= calloc( Lst->size, sizeof( void* ) );
+	int count	= 0;
+	node *MaDi	= Lst->front;
 
-    while( n )
+	while ( MaDi )
 	{
-        a[count++] = n->val;
-        n = n->next;
-    }
-
-    return a;
-}
-/*
-void **list_to_array( list *l, char *ChuGa )
-{
-	void **a = calloc( l->size, sizeof( void* ) );
-	int count = 0;
-	node *n = l->front;
-
-	while ( n )
-	{
-		char buff[256];
-		sprintf( buff, "%s/%s", ChuGa, n->val );
-
-		a[count++] = buff;
-		n = n->next;
+		Sae[count++] = MaDi->val;
+		MaDi = MaDi->next;
 	}
 
-	return a;
+	return Sae;
 }
-*/

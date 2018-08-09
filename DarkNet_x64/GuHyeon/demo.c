@@ -1,324 +1,475 @@
-ï»¿#include "../src/network.h"
-#include "../src/layer_detection.h"
-#include "../src/layer_region.h"
-#include "../src/layer_cost.h"
-#include "../src/utils.h"
-#include "../src/parser.h"
-#include "../src/box.h"
-#include "../src/image.h"
-#include "demo.h"
 
-#ifdef WIN32
-#include <time.h>
-#include <winsock.h>
-#include "../src/gettimeofday.h"
-#else
-#include <sys/time.h>
-#endif
+#include "darknet.h"
 
-#define FRAMES 3
+#define DEMO 1
 
 #ifdef OPENCV
-#include "opencv2/highgui/highgui_c.h"
-#include "opencv2/imgproc/imgproc_c.h"
-#include "opencv2/core/version.hpp"
-#ifndef CV_VERSION_EPOCH
-//#include "opencv2/videoio/videoio_c.h"
-#endif
-image get_image_from_stream( CvCapture *cap );
 
-static char **demo_names;
-static image **demo_alphabet;
-static int demo_classes;
+static char **demo_names;		//
+static image **demo_alphabet;	// ¹®ÀÚ±×¸²
+static int demo_classes;		// 
 
-static float **probs;
-static box *boxes;
-static network net;
-static image in;
-static image in_s;
-static image det;
-static image det_s;
-static image disp = { 0 };
+static network *net;
+static image buff[3];				// ¾²·¹µå Ã³¸®¿ë ÀÔ·ÂÀÚ·á 3Àå¿¡ ÇØ´çÇÏ´Â ¸Þ¸ð¸®
+static image buff_letter[3];
+static int	 buff_index		= 0;	//
 static CvCapture * cap;
-static float fps = 0;
-static float demo_thresh = 0;
+static IplImage  * ipl;
+static float fps			= 0;	//
+static float demo_thresh	= 0;	// ¾²·¹µå Ã³¸®¿ë ¹®ÅÎ°ª
+static float demo_hier		= 0.5f;	// ¾²·¹µå Ã³¸®¿ë °èÃþ ¹®ÅÎ°ª
+static int	 running		= 0;
 
-static float *predictions[FRAMES];
-static int demo_index = 0;
-static image images[FRAMES];
-static IplImage* ipl_images[FRAMES];
-static float *avg;
+static int	 demo_frame		= 3;	// ¾²·¹µå Ã³¸®¿ë ÇÁ·¹ÀÓ¼ö
+static int	 demo_index		= 0;
+static float **predictions;			// ¾²·¹µå Ã³¸®¿ë ¿¹ÃøÇÑ ½Å°æ¸Á Ãâ·Â°ª º¹»çº»(Ãâ·Â°³¼ö * ÇÁ·¹ÀÓ¼ö)
+static float *avg;					// ¾²·¹µå Ã³¸®¿ë ½Å°æ¸Á Ãâ·Â°ªÀ» demo_frame ¼ö·Î Æò±ÕÇÑ °ª
+static int	 demo_done		= 0;
+static int	 demo_total		= 0;	// ¾²·¹µå Ã³¸®¿ë ½Å°æ¸Á °ËÃâÃþ(YOLO, REGION, DETECTION)ÀÇ Ãâ·Â°³¼ö
+double demo_time;
 
-void draw_detections_cv( IplImage* show_img
-					, int num
-					, float thresh
-					, box *boxes
-					, float **probs
-					, char **names
-					, image **alphabet
-					, int classes );
 
-image get_image_from_stream_resize( CvCapture *cap, int w, int h, IplImage** in_img );
-
-IplImage* in_img;
-IplImage* det_img;
-IplImage* show_img;
-
-void *fetch_in_thread( void *ptr )
+// ½Å°æ¸Á °ËÃâÃþ(YOLO, REGION, DETECTION)ÀÇ Ãâ·Â°³¼ö¸¦ ¾Ë¾Æ³½´Ù
+int size_network( network *net )
 {
-	//in = get_image_from_stream(cap);
-	in = get_image_from_stream_resize( cap, net.w, net.h, &in_img );
+	int ii;
+	int count = 0;
 
-	if ( !in.data )
+	for ( ii=0; ii < net->n; ++ii )
 	{
-		error( "Stream closed." );
+		layer l = net->layers[ii];
+
+		if ( l.type == YOLO || l.type == REGION || l.type == DETECTION )
+		{
+			count += l.outputs;
+		}
 	}
 
-	//in_s = resize_image(in, net.w, net.h);
-	in_s = make_image( in.w, in.h, in.c );
-	memcpy( in_s.data, in.data, in.h*in.w*in.c*sizeof( float ) );
+	return count;
+}
+// ½Å°æ¸Á °ËÃâÃþ(YOLO, REGION, DETECTION)ÀÇ Ãâ·Â°ªÀ» ¾²·¹µå Ã³¸®¿ë ¸Þ¸ð¸®·Î º¹»ç
+void remember_network( network *net )
+{
+	int ii;
+	int count = 0;
+	for ( ii=0; ii < net->n; ++ii )
+	{
+		layer l = net->layers[ii];
+		if ( l.type == YOLO || l.type == REGION || l.type == DETECTION )
+		{
+			memcpy( predictions[demo_index] + count, net->layers[ii].output, sizeof( float ) * l.outputs );
+			count += l.outputs;
+		}
+	}
+}
+// demo_frame ¼ö·Î Æò±Õ°ªÀ» ±¸ÇÏ°í, ½Å°æ¸Á Ãâ·Â¸Þ¸ð¸®·Î º¹»ç,
+detection *avg_predictions( network *net, int *nboxes )
+{
+	int ii, jj;
+	int count = 0;
 
-	return 0;
+	fill_cpu( demo_total, 0, avg, 1 );	// avg ¸Þ¸ð¸®¸¦ ÃÊ±âÈ­
+
+	// ÇÁ·¹ÀÓ¼ö¸¦ ¹Ýº¹
+	for ( jj=0; jj < demo_frame; ++jj )
+	{
+		// predictions ÀÇ °ªÀ» demo_frame ¼ö·Î ³ª´« Æò±Õ°ªÀ» avg ¿¡ ´õÇÑ´Ù
+		axpy_cpu( demo_total, 1.0f/demo_frame, predictions[jj], 1, avg, 1 );
+	}
+
+	for ( ii=0; ii < net->n; ++ii )
+	{
+		layer l = net->layers[ii];
+
+		if ( l.type == YOLO || l.type == REGION || l.type == DETECTION )
+		{
+			// Æò±Õ°ªÀ» ½Å°æ¸Á Ãâ·Â¸Þ¸ð¸®·Î º¹»ç
+			memcpy( l.output, avg + count, sizeof( float ) * l.outputs );
+			count += l.outputs;
+		}
+	}
+
+	detection *dets = get_network_boxes( net
+									, buff[0].w		// ³Êºñ
+									, buff[0].h		// ³ôÀÌ
+									, demo_thresh	// ¹®ÅÎ°ª
+									, demo_hier		// °èÃþ ¹®ÅÎ°ª
+									, 0
+									, 1
+									, nboxes );		//	°ËÃâ°³¼ö???
+
+	return dets;
 }
 
 void *detect_in_thread( void *ptr )
 {
-	float nms = .4;
+	running = 1;
+	float nms = 0.4f;
 
-	layer l = net.layers[net.n-1];
-	float *X = det_s.data;
-	float *prediction = network_predict( net, X );
+	layer l = net->layers[net->n-1];
+	float *X = buff_letter[(buff_index+2)%3].data;
+	network_predict( net, X );
 
-	memcpy( predictions[demo_index], prediction, l.outputs*sizeof( float ) );
-	mean_arrays( predictions, FRAMES, l.outputs, avg );
-	l.output = avg;
-
-	free_image( det_s );
-	if ( l.type == DETECTION )
+/*	if ( l.type == DETECTION )
 	{
 		get_detection_boxes( l, 1, 1, demo_thresh, probs, boxes, 0 );
 	}
-	else if ( l.type == REGION )
-	{
-		get_region_boxes( l, 1, 1, demo_thresh, probs, boxes, 0, 0 );
-	}
 	else
-	{
-		error( "Last layer must produce detections\n" );
-	}
+*/
+	remember_network( net );
+	detection *dets = 0;
+	int nboxes = 0;
+	dets = avg_predictions( net, &nboxes );
 
-	if ( nms>0 )
-		do_nms( boxes, probs, l.w*l.h*l.n, l.classes, nms );
+/*	int i, j;
+	box zero = { 0 };
+	int classes = l.classes;
+
+	for ( i = 0; i < demo_detections; ++i )
+	{
+		avg[i].objectness = 0;
+		avg[i].bbox = zero;
+		memset( avg[i].prob, 0, classes*sizeof( float ) );
+
+		for ( j = 0; j < demo_frame; ++j )
+		{
+			axpy_cpu( classes, 1./demo_frame, dets[j][i].prob, 1, avg[i].prob, 1 );
+			avg[i].objectness += dets[j][i].objectness * 1./demo_frame;
+			avg[i].bbox.x += dets[j][i].bbox.x * 1./demo_frame;
+			avg[i].bbox.y += dets[j][i].bbox.y * 1./demo_frame;
+			avg[i].bbox.w += dets[j][i].bbox.w * 1./demo_frame;
+			avg[i].bbox.h += dets[j][i].bbox.h * 1./demo_frame;
+		}
+
+	//copy_cpu(classes, dets[0][i].prob, 1, avg[i].prob, 1);
+	//avg[i].objectness = dets[0][i].objectness;
+	}
+*/
+
+	if ( nms > 0 )
+		do_nms_obj( dets, nboxes, l.classes, nms );
 
 	printf( "\033[2J" );
 	printf( "\033[1;1H" );
 	printf( "\nFPS:%.1f\n", fps );
 	printf( "Objects:\n\n" );
 
-	images[demo_index] = det;
-	det = images[(demo_index + FRAMES/2 + 1)%FRAMES];
-	ipl_images[demo_index] = det_img;
-	det_img = ipl_images[(demo_index + FRAMES / 2 + 1) % FRAMES];
-	demo_index = (demo_index + 1)%FRAMES;
+	image display = buff[(buff_index+2) % 3];
 
-	//draw_detections(det, l.w*l.h*l.n, demo_thresh, boxes, probs, demo_names, demo_alphabet, demo_classes);
-	draw_detections_cv( det_img
-					, l.w*l.h*l.n
-					, demo_thresh
-					, boxes
-					, probs
-					, demo_names
-					, demo_alphabet
-					, demo_classes );
+	draw_detections( display
+				, dets				// °ËÃâÇÑ ¸ñ·Ï
+				, nboxes			// °ËÃâÇÑ »óÀÚ°³¼ö
+				, demo_thresh
+				, demo_names		// °ËÃâ ºÐ·ùÀÌ¸§ ¸ñ·Ï
+				, demo_alphabet		// ¹®ÀÚ±×¸²
+				, demo_classes );	// ºÐ·ù°³¼ö
+	free_detections( dets, nboxes );
+
+	demo_index = (demo_index + 1) % demo_frame;
+	running = 0;
+	return 0;
+}
+
+void *fetch_in_thread( void *ptr )
+{
+	int status = fill_image_from_stream( cap, buff[buff_index] );
+	letterbox_image_into( buff[buff_index], net->w, net->h, buff_letter[buff_index] );
+
+	if ( status == 0 ) demo_done = 1;
+	return 0;
+}
+
+void *display_in_thread( void *ptr )
+{
+	show_image_cv( buff[(buff_index + 1)%3], "Demo", ipl );
+	int ch = cvWaitKey( 1 );
+
+	if ( ch != -1 ) ch = ch%256;
+
+	if ( ch == 27 )			// ctrl+[ Esc
+	{
+		demo_done = 1;
+		return 0;
+	}
+	else if ( ch == 82 )	// "R"
+	{
+		demo_thresh += 0.02f;
+	}
+	else if ( ch == 84 )	// "T"
+	{
+		demo_thresh -= 0.02f;
+		if ( demo_thresh <= 0.02f ) demo_thresh = 0.02f;
+	}
+	else if ( ch == 83 )	// "S"
+	{
+		demo_hier += 0.02f;
+	}
+	else if ( ch == 81 )	// "Q"
+	{
+		demo_hier -= 0.02f;
+		if ( demo_hier <= 0.0f ) demo_hier = 0.0f;
+	}
 
 	return 0;
 }
 
-double get_wall_time()
+void *display_loop( void *ptr )
 {
-	struct timeval time;
-
-	if ( gettimeofday( &time, NULL ) )
+	while ( 1 )
 	{
-		return 0;
+		display_in_thread( 0 );
 	}
-
-	return (double)time.tv_sec + (double)time.tv_usec * .000001;
 }
 
-void demo( char			*cfgfile
-		, char			*weightfile
-		, float			thresh
-		, int			cam_index
-		, const char	*filename
-		, char			**names
-		, int			classes
-		, int			frame_skip
-		, char			*prefix
-		, char			*out_filename )
+void *detect_loop( void *ptr )
 {
-	//skip = frame_skip;
-	image **alphabet = load_alphabet();
-	int delay		= frame_skip;
+	while ( 1 )
+	{
+		detect_in_thread( 0 );
+	}
+}
+
+void demo( char *cfgfile
+		, char *weightfile
+		, float thresh
+		, int cam_index
+		, const char *filename
+		, char **names	// ºÐ·ùÀÌ¸§ ¸ñ·Ï
+		, int classes	// ºÐ·ù°³¼ö
+		, int delay
+		, char *prefix
+		, int avg_frames
+		, float hier	// °èÃþ ¹®ÅÎ°ª
+		, int ww		//
+		, int hh		//
+		, int frames
+		, int fullscreen )
+{
+	//demo_frame = avg_frames;
+	image **alphabet = load_alphabet();	// ±×¸²ÆÄÀÏ·Î ¸¸µé¾îÁø ¹®ÀÚÀÌ¹ÌÁö¸¦ Å¾ÀçÇÑ´Ù
 	demo_names		= names;
 	demo_alphabet	= alphabet;
 	demo_classes	= classes;
 	demo_thresh		= thresh;
+	demo_hier		= hier;				// °èÃþ ¹®ÅÎ°ª
+
 	printf( "Demo\n" );
 
-	net = parse_network_cfg( cfgfile );
+	net = load_network( cfgfile, weightfile, 0 );
+	set_batch_network( net, 1 );
 
-	if ( weightfile )
+	pthread_t detect_thread;
+	pthread_t fetch_thread;
+	srand( 2222222 );
+
+	int ii;
+	demo_total	= size_network( net );
+	predictions	= calloc( demo_frame, sizeof( float* ) );
+
+	for ( ii=0; ii < demo_frame; ++ii )
 	{
-		load_weights( &net, weightfile );
+		predictions[ii] = calloc( demo_total, sizeof( float ) );
 	}
-	set_batch_network( &net, 1 );
+
+	avg = calloc( demo_total, sizeof( float ) );
+
+	if ( filename )
+	{
+		//printf( "video file: %s\n", filename );	//  [7/12/2018 jobs]
+		printf( "ºñµð¿À ÆÄÀÏ: %s\n", filename );		//  [7/12/2018 jobs]
+		cap = cvCaptureFromFile( filename );
+	}
+	else
+	{
+		cap = cvCaptureFromCAM( cam_index );
+
+		if ( ww )		{	cvSetCaptureProperty( cap, CV_CAP_PROP_FRAME_WIDTH, ww );	}
+		if ( hh )		{	cvSetCaptureProperty( cap, CV_CAP_PROP_FRAME_HEIGHT, hh );	}
+		if ( frames )	{	cvSetCaptureProperty( cap, CV_CAP_PROP_FPS, frames );		}
+	}
+
+	if ( !cap )
+	//	error( "Couldn't connect to webcam.\n" );	//  [7/12/2018 jobs]
+		error( "À¥Ä·À» ¿¬°áÇÒ¼ö ¾øÀ½...\n" );			//  [7/12/2018 jobs]
+
+	buff[0] = get_image_from_stream( cap );
+	buff[1] = copy_image( buff[0] );
+	buff[2] = copy_image( buff[0] );
+	buff_letter[0] = letterbox_image( buff[0], net->w, net->h );
+	buff_letter[1] = letterbox_image( buff[0], net->w, net->h );
+	buff_letter[2] = letterbox_image( buff[0], net->w, net->h );
+	ipl = cvCreateImage( cvSize( buff[0].w, buff[0].h ), IPL_DEPTH_8U, buff[0].c );
+
+	int count = 0;
+	if ( !prefix )
+	{
+		cvNamedWindow( "Demo", CV_WINDOW_NORMAL );
+
+		if ( fullscreen )
+		{
+			cvSetWindowProperty( "Demo", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN );
+		}
+		else
+		{
+			cvMoveWindow( "Demo", 0, 0 );
+			cvResizeWindow( "Demo", 1352, 1013 );
+		}
+	}
+
+	demo_time = what_time_is_it_now();
+
+	while ( !demo_done )
+	{
+		buff_index = (buff_index + 1) %3;
+		if ( pthread_create( &fetch_thread, 0, fetch_in_thread, 0 ) )
+			//error( "Thread creation failed" );	//  [7/12/2018 jobs]
+			error( "¾²·¹µå»ý¼º ½ÇÆÐ!" );				//  [7/12/2018 jobs]
+		if ( pthread_create( &detect_thread, 0, detect_in_thread, 0 ) )
+			//error( "Thread creation failed" );	//  [7/12/2018 jobs]
+			error( "¾²·¹µå»ý¼º ½ÇÆÐ!" );				//  [7/12/2018 jobs]
+
+		if ( !prefix )
+		{
+			fps			= (float)( 1.0 / ( what_time_is_it_now() - demo_time ) );
+			demo_time	= what_time_is_it_now();
+			display_in_thread( 0 );
+		}
+		else
+		{
+			char name[256];
+			//sprintf( name, "%s_%08d", prefix, count );
+			sprintf_s( name, 256, "%s_%08d", prefix, count );
+			save_image( buff[(buff_index + 1)%3], name );
+		}
+
+		pthread_join( fetch_thread, 0 );
+		pthread_join( detect_thread, 0 );
+		++count;
+	}
+}
+
+/*
+void demo_compare( char *cfg1
+				, char *weight1
+				, char *cfg2
+				, char *weight2
+				, float thresh
+				, int cam_index
+				, const char *filename
+				, char **names
+				, int classes
+				, int delay
+				, char *prefix
+				, int avg_frames
+				, float hier
+				, int w
+				, int h
+				, int frames
+				, int fullscreen)
+{
+	demo_frame		= avg_frames;
+	predictions		= calloc( demo_frame, sizeof( float* ) );
+	image **alphabet = load_alphabet();
+	demo_names		= names;
+	demo_alphabet	= alphabet;
+	demo_classes	= classes;
+	demo_thresh		= thresh;
+	demo_hier		= hier;
+
+	printf( "Demo\n" );
+
+	net = load_network( cfg1, weight1, 0 );
+	set_batch_network( net, 1 );
+	pthread_t detect_thread;
+	pthread_t fetch_thread;
 
 	srand( 2222222 );
 
 	if ( filename )
 	{
 		printf( "video file: %s\n", filename );
-		cap = cvCaptureFromFile( filename );	// ffmpeg.dll íŒŒì¼ì´ ìžˆì–´ì•¼ í•¨
+		cap = cvCaptureFromFile( filename );
 	}
 	else
 	{
 		cap = cvCaptureFromCAM( cam_index );
+
+		if ( w )		{	cvSetCaptureProperty( cap, CV_CAP_PROP_FRAME_WIDTH, w );	}
+		if ( h )		{	cvSetCaptureProperty( cap, CV_CAP_PROP_FRAME_HEIGHT, h );	}
+		if ( frames )	{	cvSetCaptureProperty( cap, CV_CAP_PROP_FPS, frames );	}
 	}
 
-	if ( !cap )
-		error( "Couldn't connect to webcam.\n" );
+	if ( !cap ) error( "Couldn't connect to webcam.\n" );
 
-	layer l = net.layers[net.n-1];
-	int j;
+	layer l = net->layers[net->n-1];
+	demo_detections = l.n*l.w*l.h;
 
 	avg = (float *)calloc( l.outputs, sizeof( float ) );
 
-	for ( j = 0; j < FRAMES; ++j )
+	int j;
+	for ( j = 0; j < demo_frame; ++j )
+	{
 		predictions[j] = (float *)calloc( l.outputs, sizeof( float ) );
-
-	for ( j = 0; j < FRAMES; ++j )
-		images[j] = make_image( 1, 1, 3 );
+	}
 
 	boxes = (box *)calloc( l.w*l.h*l.n, sizeof( box ) );
 	probs = (float **)calloc( l.w*l.h*l.n, sizeof( float * ) );
 
 	for ( j = 0; j < l.w*l.h*l.n; ++j )
-		probs[j] = (float *)calloc( l.classes, sizeof( float * ) );
-
-	pthread_t fetch_thread;
-	pthread_t detect_thread;
-
-	fetch_in_thread( 0 );
-	det_img	= in_img;
-	det		= in;
-	det_s	= in_s;
-
-	fetch_in_thread( 0 );
-	detect_in_thread( 0 );
-	disp	= det;
-	det_img	= in_img;
-	det		= in;
-	det_s	= in_s;
-
-	for ( j=0; j<FRAMES/2; ++j )
 	{
-		fetch_in_thread( 0 );
-		detect_in_thread( 0 );
-		disp	= det;
-		det_img	= in_img;
-		det		= in;
-		det_s	= in_s;
+		probs[j] = (float *)calloc( l.classes+1, sizeof( float ) );
 	}
+
+	buff[0] = get_image_from_stream( cap );
+	buff[1] = copy_image( buff[0] );
+	buff[2] = copy_image( buff[0] );
+	buff_letter[0] = letterbox_image( buff[0], net->w, net->h );
+	buff_letter[1] = letterbox_image( buff[0], net->w, net->h );
+	buff_letter[2] = letterbox_image( buff[0], net->w, net->h );
+	ipl = cvCreateImage( cvSize( buff[0].w, buff[0].h ), IPL_DEPTH_8U, buff[0].c );
 
 	int count = 0;
 	if ( !prefix )
 	{
 		cvNamedWindow( "Demo", CV_WINDOW_NORMAL );
-		cvMoveWindow( "Demo", 0, 0 );
-		cvResizeWindow( "Demo", 1352, 1013 );
-	}
-
-	double before = get_wall_time();
-
-	while ( 1 )
-	{
-		++count;
-		if ( 1 )
+		if ( fullscreen )
 		{
-			if ( pthread_create( &fetch_thread, 0, fetch_in_thread, 0 ) )
-				error( "Thread creation failed" );
-
-			if ( pthread_create( &detect_thread, 0, detect_in_thread, 0 ) )
-				error( "Thread creation failed" );
-
-			if ( !prefix )
-			{
-				//show_image(disp, "Demo");
-				show_image_cv_ipl( show_img, "Demo", out_filename );
-				int c = cvWaitKey( 1 );
-
-				if ( c == 10 )
-				{
-					if ( frame_skip == 0 ) frame_skip = 60;
-					else if ( frame_skip == 4 ) frame_skip = 0;
-					else if ( frame_skip == 60 ) frame_skip = 4;
-					else frame_skip = 0;
-				}
-			}
-			else
-			{
-				char buff[256];
-				//sprintf( buff, "%s_%08d", prefix, count );
-				sprintf_s( buff, 256, "%s_%08d", prefix, count );
-
-				save_image( disp, buff );
-			}
-
-			pthread_join( fetch_thread, 0 );
-			pthread_join( detect_thread, 0 );
-
-			if ( delay == 0 )
-			{
-				free_image( disp );
-				disp		= det;
-				show_img	= det_img;
-			}
-
-			det_img	= in_img;
-			det		= in;
-			det_s	= in_s;
+			cvSetWindowProperty( "Demo", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN );
 		}
 		else
 		{
-			fetch_in_thread( 0 );
-			det_img	= in_img;
-			det		= in;
-			det_s	= in_s;
-			detect_in_thread( 0 );
-
-			if ( delay == 0 )
-			{
-				free_image( disp );
-				disp = det;
-			}
-
-			show_image( disp, "Demo" );
-			cvWaitKey( 1 );
-		}
-
-		--delay;
-		if ( delay < 0 )
-		{
-			delay = frame_skip;
-
-			double after = get_wall_time();
-			float curr = 1./(after - before);
-			fps = curr;
-			before = after;
+			cvMoveWindow( "Demo", 0, 0 );
+			cvResizeWindow( "Demo", 1352, 1013 );
 		}
 	}
+
+	demo_time = what_time_is_it_now();
+
+	while ( !demo_done )
+	{
+		buff_index = (buff_index + 1) %3;
+		if ( pthread_create( &fetch_thread, 0, fetch_in_thread, 0 ) ) error( "Thread creation failed" );
+		if ( pthread_create( &detect_thread, 0, detect_in_thread, 0 ) ) error( "Thread creation failed" );
+
+		if ( !prefix )
+		{
+			fps = 1./(what_time_is_it_now() - demo_time);
+			demo_time = what_time_is_it_now();
+			display_in_thread( 0 );
+		}
+		else
+		{
+			char name[256];
+			sprintf( name, "%s_%08d", prefix, count );
+			save_image( buff[(buff_index + 1)%3], name );
+		}
+
+		pthread_join( fetch_thread, 0 );
+		pthread_join( detect_thread, 0 );
+		++count;
+	}
 }
+*/
 
 #else
 void demo( char *cfgfile
@@ -328,11 +479,18 @@ void demo( char *cfgfile
 		, const char *filename
 		, char **names
 		, int classes
-		, int frame_skip
+		, int delay
 		, char *prefix
-		, char *out_filename )
+		, int avg
+		, float hier
+		, int w
+		, int h
+		, int frames
+		, int fullscreen )
 {
-	fprintf( stderr, "Demo needs OpenCV for webcam images.\n" );
+	fprintf( stderr
+	//	, "Demo needs OpenCV for webcam images.\n" );	//  [7/12/2018 jobs]
+		, "µ¥¸ð´Â À¥Ä· ÀÌ¹ÌÁö¸¦ À§ÇÑ \"OpenCV\" °¡ ÇÊ¿äÇÔ!.\n" );	//  [7/12/2018 jobs]
 }
 #endif
 

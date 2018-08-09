@@ -1,5 +1,5 @@
-ï»¿#include "image.h"
-#include "./utils.h"
+#include "image.h"
+#include "utils.h"
 #include "blas.h"
 #include "cuda.h"
 #include <stdio.h>
@@ -10,184 +10,284 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-#ifdef OPENCV
-#include "opencv2/highgui/highgui_c.h"
-#include "opencv2/imgproc/imgproc_c.h"
-#include "opencv2/core/version.hpp"
-#ifndef CV_VERSION_EPOCH
-//#include "opencv2/videoio/videoio_c.h"
-#endif
-#endif
-
-
 int windows = 0;
 
-float colors[6][3] = { {1,0,1}, {0,0,1},{0,1,1},{0,1,0},{1,1,0},{1,0,0} };
-
-float get_color( int c, int x, int max )
+float colors[6][3] =
+{	//  B, G, R
+	  { 1, 0, 1 }
+	, { 0, 0, 1 }
+	, { 0, 1, 1 }
+	, { 0, 1, 0 }
+	, { 1, 1, 0 }
+	, { 1, 0, 0 }
+};
+// colors ¹è¿­·Î Á¤ÇÑ »öÁ¶ÇÕ Ç¥¿¡ µû¶ó ¼±ÅÃÇÑ »öÀÇ Àû¿ëºñÀ²°ªÀ» ¹İÈ¯ÇÑ´Ù
+float get_color( int cc, int xx, int max )	// »ö, °ª, ÃÖ´ë°ª
 {
-	float ratio = ((float)x/max)*5;
-	int i = floor( ratio );
-	int j = ceil( ratio );
-	ratio -= i;
-	float r = (1-ratio) * colors[i][c] + ratio*colors[j][c];
+	// R 
+	float ratio = ((float)xx/max) * 5;
+	int ii = floor( ratio );	// ³»¸²
+	int jj = ceil( ratio );		// ¿Ã¸²
+	ratio -= ii;
+	float rr = (1-ratio) * colors[ii][cc] + ratio*colors[jj][cc];
 	//printf("%f\n", r);
-	return r;
+	return rr;
 }
 
-void composite_image( image source, image dest, int dx, int dy )
+image mask_to_rgb( image mask )
 {
-	int x, y, k;
-	for ( k = 0; k < source.c; ++k )
+	int n = mask.c;
+	image im = make_image( mask.w, mask.h, 3 );
+	int i, j;
+	for ( j = 0; j < n; ++j )
 	{
-		for ( y = 0; y < source.h; ++y )
+		int offset = j*123457 % n;
+		float red = get_color( 2, offset, n );
+		float green = get_color( 1, offset, n );
+		float blue = get_color( 0, offset, n );
+
+		for ( i = 0; i < im.w*im.h; ++i )
 		{
-			for ( x = 0; x < source.w; ++x )
+			im.data[i + 0*im.w*im.h] += mask.data[j*im.h*im.w + i]*red;
+			im.data[i + 1*im.w*im.h] += mask.data[j*im.h*im.w + i]*green;
+			im.data[i + 2*im.w*im.h] += mask.data[j*im.h*im.w + i]*blue;
+		}
+	}
+	return im;
+}
+
+// È­¼ÒÀÇ °ªÀ» °¡Á®¿Â´Ù
+static float get_pixel( image img, int xx, int yy, int cc )
+{
+	assert( xx < img.w && yy < img.h && cc < img.c );
+
+	return img.data[cc*img.h*img.w + yy*img.w + xx];
+}
+// È­¼ÒÀÇ °ªÀ» °¡Á®¿Â´Ù
+static float get_pixel_extend( image img, int xx, int yy, int cc )
+{
+	if ( xx < 0 || xx >= img.w || yy < 0 || yy >= img.h ) return 0;
+
+/*	if(x < 0) x = 0;
+	if(x >= img.w) x = img.w-1;
+	if(y < 0) y = 0;
+	if(y >= img.h) y = img.h-1;
+*/
+	if ( cc < 0 || cc >= img.c ) return 0;
+	return get_pixel( img, xx, yy, cc );
+}
+// ÁöÁ¤µÈ È­¼Ò¿¡ °ªÀ» º¯°æÇÑ´Ù
+static void set_pixel( image img, int xx, int yy, int cc, float val )
+{
+	assert( xx < img.w && yy < img.h && cc < img.c );
+
+	if ( xx < 0 || yy < 0 || cc < 0 || xx >= img.w || yy >= img.h || cc >= img.c ) return;
+
+	img.data[cc*img.h*img.w + yy*img.w + xx] = val;
+}
+// ÁöÁ¤µÈ È­¼Ò¿¡ °ªÀ» ´õÇÑ´Ù
+static void add_pixel( image img, int xx, int yy, int cc, float val )
+{
+	assert( xx < img.w && yy < img.h && cc < img.c );
+
+	img.data[cc*img.h*img.w + yy*img.w + xx] += val;
+}
+
+// ÁöÁ¤µÈ ½Ç¼öÁÂÇ¥ÀÇ °ªÀ» Á¤¼öÁÂÇ¥¸¦ ÀÌÁß¼±Çü º¸°£ÇÏ¿© °ªÀ» ¾ò¾î³½´Ù
+static float bilinear_interpolate( image im, float xx, float yy, int cc )
+{
+	int ix = (int)floorf( xx );
+	int iy = (int)floorf( yy );
+
+	float dx = xx - ix;
+	float dy = yy - iy;
+
+	float val = (1-dy) * (1-dx) * get_pixel_extend( im, ix, iy, cc ) +
+				dy     * (1-dx) * get_pixel_extend( im, ix, iy+1, cc ) +
+				(1-dy) *   dx   * get_pixel_extend( im, ix+1, iy, cc ) +
+				dy     *   dx   * get_pixel_extend( im, ix+1, iy+1, cc );
+	return val;
+}
+
+// ¿øº¸È­¼Ò¿Í »çº»È­¼Ò¸¦ °öÇÏ¿© »çº»ÀÌ¹ÌÁö È­¼Ò°ªÀ» º¯°æÇÑ´Ù
+void composite_image( image source, image dest, int xs, int ys )
+{
+	int xx, yy, cc;
+	// »ö ¹İº¹
+	for ( cc=0; cc < source.c; ++cc )
+	{
+		// ¼¼·Î ¹İº¹
+		for ( yy=0; yy < source.h; ++yy )
+		{
+			// °¡·Î ¹İº¹
+			for ( xx=0; xx < source.w; ++xx )
 			{
-				float val = get_pixel( source, x, y, k );
-				float val2 = get_pixel_extend( dest, dx+x, dy+y, k );
-				set_pixel( dest, dx+x, dy+y, k, val * val2 );
+				float val	= get_pixel( source, xx, yy, cc );
+				float val2	= get_pixel_extend( dest, xs+xx, ys+yy, cc );
+				set_pixel( dest, xs+xx, ys+yy, cc, val * val2 );
 			}
 		}
 	}
 }
-
-image border_image( image a, int border )
+// ÀÌ¹ÌÁö¿¡ Å×µÎ¸®¸¦ Ãß°¡ÇÑ »õ ÀÌ¹ÌÁö¸¦ ¹İÈ¯ÇÑ´Ù
+image border_image( image src, int border )
 {
-	image b = make_image( a.w + 2*border, a.h + 2*border, a.c );
-	int x, y, k;
-	for ( k = 0; k < b.c; ++k )
+	// Å×µÎ¸®¸¦ Ãß°¡ÇÑ ¸Ş¸ğ¸® ÇÒ´ç
+	image sae = make_image( src.w + 2*border, src.h + 2*border, src.c );
+
+	int xx, yy, cc;
+
+	for ( cc=0; cc < sae.c; ++cc )
 	{
-		for ( y = 0; y < b.h; ++y )
+		for ( yy=0; yy < sae.h; ++yy )
 		{
-			for ( x = 0; x < b.w; ++x )
+			for ( xx=0; xx < sae.w; ++xx )
 			{
-				float val = get_pixel_extend( a, x - border, y - border, k );
-				if ( x - border < 0 || x - border >= a.w || y - border < 0 || y - border >= a.h ) val = 1;
-				set_pixel( b, x, y, k, val );
+				float val = get_pixel_extend( src, xx - border, yy - border, cc );
+
+				if ( xx - border < 0		||
+					 xx - border >= src.w	||
+					 yy - border < 0		||
+					 yy - border >= src.h )
+				{
+					val = 1;
+				}
+
+				set_pixel( sae, xx, yy, cc, val );
 			}
 		}
 	}
-	return b;
-}
 
-image tile_images( image a, image b, int dx )
+	return sae;
+}
+// img_a ¿¡ img_b ¸¦ ´õÇÑ »õ ÀÌ¹ÌÁö¸¦ ¹İÈ¯ÇÑ´Ù
+image tile_images( image img_a, image img_b, int xs )
 {
-	if ( a.w == 0 ) return copy_image( b );
-	image c = make_image( a.w + b.w + dx
-						, (a.h > b.h) ? a.h : b.h
-						, (a.c > b.c) ? a.c : b.c );
-	fill_cpu( c.w*c.h*c.c, 1, c.data, 1 );
-	embed_image( a, c, 0, 0 );
-	composite_image( b, c, a.w + dx, 0 );
-	return c;
-}
+	// ¿øº»¿¡ ÀÚ·á°¡ ¾øÀ¸¸é »çº»ÀÌ¹ÌÁö¸¦ º¹»çÇÏ¿© ¹İÈ¯ÇÑ´Ù
+	if ( img_a.w == 0 ) return copy_image( img_b );
+	// ±¸°³ÀÇ ÀÌ¹ÌÁö¸¦ ÇÕÇÑ Å©±âÀÇ ¸Ş¸ğ¸®¸¦ ´Ù½Ã ÇÒ´çÇÑ´Ù
+	image sae = make_image( img_a.w + img_b.w + xs
+						 , (img_a.h > img_b.h) ? img_a.h : img_b.h
+						 , (img_a.c > img_b.c) ? img_a.c : img_b.c );
 
+	fill_cpu( sae.w*sae.h*sae.c, 1.0f, sae.data, 1 );	// composite_image ¸¦ »ç¿ëÇÏ±â À§ÇØ 1.0 À¸·Î Ã¤¿ò
+	embed_image( img_a, sae, 0, 0 );					// »õÀÌ¹ÌÁö¿¡ img_a ¸¦ Ãß°¡
+	composite_image( img_b, sae, img_a.w + xs, 0 );		// »õÀÌ¹ÌÁö¿¡ img_b ¸¦ Ãß°¡(embed_image ¸¦ »ç¿ëÇØµµ µÊ)
+
+	return sae;
+}
+// ¹®ÀÚ¿­À» ÁöÁ¤ÇÑ Å©±âÀÇ ÀÌ¹ÌÁö·Î º¯È¯ÇÏ°í Å×µÎ¸® °ø°£À» Ãß°¡ÇÏ¿© ÀÌ¹ÌÁö¸¦ ¹İÈ¯
 image get_label( image **characters, char *string, int size )
 {
+	size = size/10;	// ¹®ÀÚÀÌ¹ÌÁö Å©±â ÁöÁ¤
 	if ( size > 7 ) size = 7;
+
 	image label = make_empty_image( 0, 0, 0 );
+
 	while ( *string )
 	{
-		image l = characters[size][(int)*string];
-		image n = tile_images( label, l, -size - 1 + (size+1)/2 );
-		free_image( label );
-		label = n;
+		// ¹®ÀÚ±×¸² ¹è¿­¿¡¼­ ¹®ÀÚÇÏ³ª¿¡ ÇØ´çÇÏ´Â ÀÌ¹ÌÁö¸¦ º¹»çÇÑ´Ù
+		image lbl = characters[size][(int)*string];
+		// µÎ°³ÀÇ ÀÌ¹ÌÁö¸¦ ÇÕÇÑ´Ù
+		image sae = tile_images( label, lbl, -size - 1 + (size+1)/2 );
+		free_image( label );	// »õ·Î ÇÒ´çÇÑ ÀÌ¹ÌÁö¸¦ »ç¿ëÇÏ±â À§ÇØ ÀÌÀü¿¡ ÇÒ´çÇÑ ¸Ş¸ğ¸® ÇØÁ¦
+		label = sae;
 		++string;
 	}
-	image b = border_image( label, label.h*.25 );
+
+	image sae = border_image( label, label.h*0.25 );
 	free_image( label );
-	return b;
+
+	return sae;
 }
-
-void draw_label( image a, int r, int c, image label, const float *rgb )
+// ÀÌ¹ÌÁö¿¡ µüÁö¸¦ Ãß°¡ÇÑ´Ù		// xs, ys À§Ä¡¹Ù²Ş [7/14/2018 jobs]
+void draw_label( image src, int xs, int ys, image label, const float *rgb )
 {
-	int w = label.w;
-	int h = label.h;
-	if ( r - h >= 0 ) r = r - h;
+	int ww = label.w;
+	int hh = label.h;
+	if ( ys - hh >= 0 ) ys = ys - hh;
 
-	int i, j, k;
-	for ( j = 0; j < h && j + r < a.h; ++j )
+	int xx, yy, cc;
+	for ( yy=0; yy < hh && ys + yy < src.h; ++yy )
 	{
-		for ( i = 0; i < w && i + c < a.w; ++i )
+		for ( xx=0; xx < ww && xs + xx < src.w; ++xx )
 		{
-			for ( k = 0; k < label.c; ++k )
+			for ( cc=0; cc < label.c; ++cc )
 			{
-				float val = get_pixel( label, i, j, k );
-				set_pixel( a, i+c, j+r, k, rgb[k] * val );
+				float val = get_pixel( label, xx, yy, cc );
+				set_pixel( src, xs+xx, ys+yy, cc, rgb[cc] * val );
 			}
 		}
 	}
 }
-
-void draw_box( image a, int x1, int y1, int x2, int y2, float r, float g, float b )
+// ÀÌ¹ÌÁö¿¡ ÁöÁ¤ÇÑ Å©±â¿Í »öÀ¸·Î »óÀÚ¸¦ ±×¸°´Ù
+void draw_box( image img, int xs, int ys, int xe, int ye, float r, float g, float b )
 {
 	//normalize_image(a);
-	int i;
-	if ( x1 < 0 ) x1 = 0;
-	if ( x1 >= a.w ) x1 = a.w-1;
-	if ( x2 < 0 ) x2 = 0;
-	if ( x2 >= a.w ) x2 = a.w-1;
+	int ii;
+	if ( xs < 0 )		xs = 0;
+	if ( xs >= img.w )	xs = img.w-1;
+	if ( xe < 0 )		xe = 0;
+	if ( xe >= img.w )	xe = img.w-1;
 
-	if ( y1 < 0 ) y1 = 0;
-	if ( y1 >= a.h ) y1 = a.h-1;
-	if ( y2 < 0 ) y2 = 0;
-	if ( y2 >= a.h ) y2 = a.h-1;
-
-	for ( i = x1; i <= x2; ++i )
+	if ( ys < 0 )		ys = 0;
+	if ( ys >= img.h )	ys = img.h-1;
+	if ( ye < 0 )		ye = 0;
+	if ( ye >= img.h )	ye = img.h-1;
+	// °¡·Î¼± ±×¸®±â
+	for ( ii=xs; ii <= xe; ++ii )
 	{
-		a.data[i + y1*a.w + 0*a.w*a.h] = r;
-		a.data[i + y2*a.w + 0*a.w*a.h] = r;
+		img.data[ii + ys*img.w + 0*img.w*img.h] = r;
+		img.data[ii + ye*img.w + 0*img.w*img.h] = r;
 
-		a.data[i + y1*a.w + 1*a.w*a.h] = g;
-		a.data[i + y2*a.w + 1*a.w*a.h] = g;
+		img.data[ii + ys*img.w + 1*img.w*img.h] = g;
+		img.data[ii + ye*img.w + 1*img.w*img.h] = g;
 
-		a.data[i + y1*a.w + 2*a.w*a.h] = b;
-		a.data[i + y2*a.w + 2*a.w*a.h] = b;
+		img.data[ii + ys*img.w + 2*img.w*img.h] = b;
+		img.data[ii + ye*img.w + 2*img.w*img.h] = b;
 	}
-	for ( i = y1; i <= y2; ++i )
+	// ¼¼·Î¼± ±×¸®±â
+	for ( ii=ys; ii <= ye; ++ii )
 	{
-		a.data[x1 + i*a.w + 0*a.w*a.h] = r;
-		a.data[x2 + i*a.w + 0*a.w*a.h] = r;
+		img.data[xs + ii*img.w + 0*img.w*img.h] = r;
+		img.data[xe + ii*img.w + 0*img.w*img.h] = r;
 
-		a.data[x1 + i*a.w + 1*a.w*a.h] = g;
-		a.data[x2 + i*a.w + 1*a.w*a.h] = g;
+		img.data[xs + ii*img.w + 1*img.w*img.h] = g;
+		img.data[xe + ii*img.w + 1*img.w*img.h] = g;
 
-		a.data[x1 + i*a.w + 2*a.w*a.h] = b;
-		a.data[x2 + i*a.w + 2*a.w*a.h] = b;
+		img.data[xs + ii*img.w + 2*img.w*img.h] = b;
+		img.data[xe + ii*img.w + 2*img.w*img.h] = b;
 	}
 }
-
-void draw_box_width( image a, int x1, int y1, int x2, int y2, int w
-					, float r, float g, float b )
+// ÀÌ¹ÌÁö¿¡ ÁöÁ¤ÇÑ Å©±â, µÎ²², »öÀ¸·Î »óÀÚ¸¦ ±×¸°´Ù
+void draw_box_width( image img, int xs, int ys, int xe, int ye, int w, float r, float g, float b )
 {
-	int i;
-	for ( i = 0; i < w; ++i )
+	int ii;
+	for ( ii=0; ii < w; ++ii )
 	{
-		draw_box( a, x1+i, y1+i, x2-i, y2-i, r, g, b );
+		draw_box( img, xs+ii, ys+ii, xe-ii, ye-ii, r, g, b );
 	}
 }
-
-void draw_bbox( image a, box bbox, int w, float r, float g, float b )
+// ÀÌ¹ÌÁö¿¡ ÁöÁ¤ÇÑ °æ°è»óÀÚÅ©±â, µÎ²², »öÀ¸·Î »óÀÚ¸¦ ±×¸°´Ù
+void draw_bbox( image img, box bbox, int w, float r, float g, float b )
 {
-	int left  = (bbox.x-bbox.w/2)*a.w;
-	int right = (bbox.x+bbox.w/2)*a.w;
-	int top   = (bbox.y-bbox.h/2)*a.h;
-	int bot   = (bbox.y+bbox.h/2)*a.h;
+	int left  = ( bbox.x - bbox.w/2 ) * img.w;
+	int right = ( bbox.x + bbox.w/2 ) * img.w;
+	int top   = ( bbox.y - bbox.h/2 ) * img.h;
+	int bot   = ( bbox.y + bbox.h/2 ) * img.h;
 
-	int i;
-	for ( i = 0; i < w; ++i )
+	int ii;
+	for ( ii=0; ii < w; ++ii )
 	{
-		draw_box( a, left+i, top+i, right-i, bot-i, r, g, b );
+		draw_box( img, left+ii, top+ii, right-ii, bot-ii, r, g, b );
 	}
 }
-
+// ±×¸²ÆÄÀÏ·Î ¸¸µé¾îÁø ¹®ÀÚÀÌ¹ÌÁö¸¦ Å¾ÀçÇÑ´Ù
 image **load_alphabet()
 {
 	int i, j;
 	const int nsize = 8;
 	image **alphabets = calloc( nsize, sizeof( image ) );
-
 	for ( j = 0; j < nsize; ++j )
 	{
 		alphabets[j] = calloc( 128, sizeof( image ) );
@@ -195,38 +295,67 @@ image **load_alphabet()
 		{
 			char buff[256];
 			//sprintf( buff, "data/labels/%d_%d.png", i, j );
-			sprintf_s( buff, 256, "data/labels_ascii/%d_%d.png", i, j );
+			//sprintf_s( buff, 256, "data/labels/%d_%d.png", i, j );	//  [7/12/2018 jobs]
+			sprintf_s( buff, 256, "data/labels_image/%d_%d.png", i, j );	//  [7/12/2018 jobs]
 			alphabets[j][i] = load_image_color( buff, 0, 0 );
 		}
 	}
 	return alphabets;
 }
 
-void draw_detections( image im, int num, float thresh, box *boxes
-					, float **probs, char **names, image **alphabet, int classes )
+void draw_detections( image im
+					, detection *dets	// °ËÃâÇÑ ¸ñ·Ï
+					, int num			// °ËÃâÇÑ »óÀÚ°³¼ö
+					, float thresh		// ¹®ÅÎ°ª
+					, char **names		// °ËÃâ ºĞ·ùÀÌ¸§ ¸ñ·Ï
+					, image **alphabet	// ¹®ÀÚ±×¸²
+					, int classes )		// ºĞ·ù°³¼ö
 {
-	int i;
-
-	for ( i = 0; i < num; ++i )
+	int ii, jj;
+	// °ËÃâÇÑ »óÀÚ°³¼ö ¹İº¹
+	for ( ii=0; ii < num; ++ii )
 	{
-		int class = max_index( probs[i], classes );
-		float prob = probs[i][class];
-		if ( prob > thresh )
+		char labelstr[4096] = { 0 };
+		int class = -1;
+		// ºĞ·ù°³¼ö ¹İº¹
+		for ( jj=0; jj < classes; ++jj )
 		{
-
-			int width = im.h * .012;
-
-			if ( 0 )
+			if ( dets[ii].prob[jj] > thresh )
 			{
-				width = pow( prob, 1./2. )*10+1;
+				if ( class < 0 )
+				{
+					//strcat( labelstr, names[j] );
+					strcat_s( labelstr, 4096, names[jj] );
+					class = jj;
+				}
+				else		// ¿©·¯°³°¡ ¹®ÅÎ°ªº¸´Ù Å«°æ¿ì
+				{
+					//strcat( labelstr, ", " );
+					//strcat( labelstr, names[j] );
+					strcat_s( labelstr, 4096, ", " );
+					strcat_s( labelstr, 4096, names[jj] );
+				}
+
+				//printf( "%s: %.0f%%\n", names[jj], dets[ii].prob[jj]*100 );	//  [7/14/2018 jobs]
+				printf( "%s: ÃßÁ¤È®·ü %.0f%%\n", names[jj], dets[ii].prob[jj]*100 );	//  [7/14/2018 jobs]
+			}
+		}
+
+		if ( class >= 0 )
+		{
+			int width = im.h * 0.006f;
+
+/*			if( 0 )
+			{
+				width = pow(prob, 1./2.)*10+1;
 				alphabet = 0;
 			}
-
-			printf( "%s: %.0f%%\n", names[class], prob*100 );
-			int offset = class*123457 % classes;
-			float red = get_color( 2, offset, classes );
-			float green = get_color( 1, offset, classes );
-			float blue = get_color( 0, offset, classes );
+*/
+			//printf( "%d %s: %.0f%%\n", i, names[class], prob*100 );
+			int offset	= class*123457 % classes;	// ºĞ·ù°³¼ö·Î ³ª´« ³ª¸ÓÁö°ª
+			float red	= get_color( 2, offset, classes );
+			float green	= get_color( 1, offset, classes );
+			float blue	= get_color( 0, offset, classes );
 			float rgb[3];
 
 			//width = prob*20+2;
@@ -234,317 +363,304 @@ void draw_detections( image im, int num, float thresh, box *boxes
 			rgb[0] = red;
 			rgb[1] = green;
 			rgb[2] = blue;
-			box b = boxes[i];
+			box bx = dets[ii].bbox;
+			//printf("%f %f %f %f\n", bx.x, bx.y, bx.w, bx.h);
 
-			int left  = (b.x-b.w/2.)*im.w;
-			int right = (b.x+b.w/2.)*im.w;
-			int top   = (b.y-b.h/2.)*im.h;
-			int bot   = (b.y+b.h/2.)*im.h;
+			int left  = ( bx.x - bx.w/2.0f )*im.w;	// °¡·Î ½ÃÀÛ
+			int right = ( bx.x + bx.w/2.0f )*im.w;	// °¡·Î ³¡
+			int top   = ( bx.y - bx.h/2.0f )*im.h;	// ¼¼·Î ½ÃÀÛ
+			int bot   = ( bx.y + bx.h/2.0f )*im.h;	// ¼¼·Î ³¡
 
-			if ( left < 0 ) left = 0;
-			if ( right > im.w-1 ) right = im.w-1;
-			if ( top < 0 ) top = 0;
-			if ( bot > im.h-1 ) bot = im.h-1;
+			if ( left < 0 )			left	= 0;
+			if ( right > im.w-1 )	right	= im.w-1;
+			if ( top < 0 )			top		= 0;
+			if ( bot > im.h-1 )		bot		= im.h-1;
 
 			draw_box_width( im, left, top, right, bot, width, red, green, blue );
+
+			// ¹®ÀÚ¿­¿¡ ÇØ´çÇÏ´Â ¹®ÀÚ±×¸²À» Ã£¾Æ¼­ Ãß°¡ÇÔ
 			if ( alphabet )
 			{
-				image label = get_label( alphabet, names[class], (im.h*.03)/10 );
-				draw_label( im, top + width, left, label, rgb );
+				image label = get_label( alphabet, labelstr, (int)(im.h*0.03f) );
+				//draw_label( im, top + width, left, label, rgb );	//  [7/14/2018 jobs]
+				draw_label( im, left, top + width, label, rgb );	//  [7/14/2018 jobs]
+				free_image( label );
 			}
-		}
-	}
-}
 
-#ifdef OPENCV
-void draw_detections_cv( IplImage* show_img, int num, float thresh
-						, box *boxes, float **probs, char **names
-						, image **alphabet, int classes )
-{
-	int i;
-
-	for ( i = 0; i < num; ++i )
-	{
-		int class = max_index( probs[i], classes );
-		float prob = probs[i][class];
-		if ( prob > thresh )
-		{
-
-			int width = show_img->height * .012;
-
-			if ( 0 )
+			if ( dets[ii].mask )
 			{
-				width = pow( prob, 1. / 2. ) * 10 + 1;
-				alphabet = 0;
+				image mask			= float_to_image( 14, 14, 1, dets[ii].mask );
+				image resized_mask	= resize_image( mask, bx.w*im.w, bx.h*im.h );
+				image tmask			= threshold_image( resized_mask, 0.5f );
+				embed_image( tmask, im, left, top );
+				free_image( mask );
+				free_image( resized_mask );
+				free_image( tmask );
 			}
-
-			printf( "%s: %.0f%%\n", names[class], prob * 100 );
-			int offset = class * 123457 % classes;
-			float red = get_color( 2, offset, classes );
-			float green = get_color( 1, offset, classes );
-			float blue = get_color( 0, offset, classes );
-			float rgb[3];
-
-			//width = prob*20+2;
-
-			rgb[0] = red;
-			rgb[1] = green;
-			rgb[2] = blue;
-			box b = boxes[i];
-
-			int left = (b.x - b.w / 2.)*show_img->width;
-			int right = (b.x + b.w / 2.)*show_img->width;
-			int top = (b.y - b.h / 2.)*show_img->height;
-			int bot = (b.y + b.h / 2.)*show_img->height;
-
-			if ( left < 0 ) left = 0;
-			if ( right > show_img->width - 1 ) right = show_img->width - 1;
-			if ( top < 0 ) top = 0;
-			if ( bot > show_img->height - 1 ) bot = show_img->height - 1;
-
-			float const font_size = show_img->height / 1000.F;
-			CvPoint pt1, pt2, pt_text, pt_text_bg1, pt_text_bg2;
-			pt1.x = left;
-			pt1.y = top;
-			pt2.x = right;
-			pt2.y = bot;
-			pt_text.x = left;
-			pt_text.y = top - 12;
-			pt_text_bg1.x = left;
-			pt_text_bg1.y = top - (10+25*font_size);
-			pt_text_bg2.x = right;
-			pt_text_bg2.y = top;
-			CvScalar color;
-			color.val[0] = red * 256;
-			color.val[1] = green * 256;
-			color.val[2] = blue * 256;
-
-			cvRectangle( show_img, pt1, pt2, color, width, 8, 0 );
-
-			cvRectangle( show_img, pt_text_bg1, pt_text_bg2, color, width, 8, 0 );
-			cvRectangle( show_img, pt_text_bg1, pt_text_bg2, color, CV_FILLED, 8, 0 );	// filled
-			CvScalar black_color;
-			black_color.val[0] = 0;
-			CvFont font;
-			cvInitFont( &font, CV_FONT_HERSHEY_SIMPLEX, font_size, font_size, 0, font_size * 3, 8 );
-			cvPutText( show_img, names[class], pt_text, &font, black_color );
 		}
 	}
 }
-#endif
 
+// ÀÌ¹ÌÁö¸¦ ´ë°¢µÚÁı±â(È¸Àüº¯È¯) ÇÑ´Ù
 void transpose_image( image im )
 {
 	assert( im.w == im.h );
-	int n, m;
-	int c;
-	for ( c = 0; c < im.c; ++c )
+	int nn, mm;
+	int cc;
+	// »ö ¹İº¹(Ã¤³Î)
+	for ( cc=0; cc < im.c; ++cc )
 	{
-		for ( n = 0; n < im.w-1; ++n )
+		int cc_Bo	= im.w*im.h*cc;	// »ö °£°İ
+
+		// Çà ¹İº¹
+		for ( nn=0; nn< im.w-1; ++nn )
 		{
-			for ( m = n + 1; m < im.w; ++m )
+			// ¿­ ¹İº¹
+			for ( mm=nn + 1; mm < im.w; ++mm )
 			{
-				float swap = im.data[m + im.w*(n + im.h*c)];
-				im.data[m + im.w*(n + im.h*c)] = im.data[n + im.w*(m + im.h*c)];
-				im.data[n + im.w*(m + im.h*c)] = swap;
+				int hw	= cc_Bo + im.w*nn + mm;	//ÇöÀçÀ§Ä¡
+				int dw	= cc_Bo + im.w*mm + nn;	//´ëÀÀÀ§Ä¡
+				//int hw	= mm + im.w*(nn + im.h*cc);	//ÇöÀçÀ§Ä¡
+				//int dw	= nn + im.w*(mm + im.h*cc);	//´ëÀÀÀ§Ä¡
+
+				float swap = im.data[ hw ];		//ÇöÀçÀ§Ä¡ °ªÀ» ´ã¾ÆµĞ´Ù
+				im.data[ hw ] = im.data[ dw ];	//ÇöÀçÀ§Ä¡ °ªÀ» ´ëÀÀÀ§Ä¡ °ªÀ¸·Î º¯°æÇÑ´Ù
+				im.data[ dw ] = swap;			//´ëÀÀÀ§Ä¡ °ªÀ» ÇöÀçÀ§Ä¡ °ªÀ¸·Î º¯°æÇÑ´Ù
+
+				//float swap = im.data[ mm + im.w*(nn + im.h*cc) ];
+				//im.data[ mm + im.w*(nn + im.h*cc) ] = im.data[ nn + im.w*(mm + im.h*cc) ];
+				//im.data[ nn + im.w*(mm + im.h*cc) ] = swap;
 			}
 		}
 	}
 }
 
+// ÀÌ¹ÌÁö¸¦ ½Ã°è¹æÇâÀ¸·Î È¸ÀüÇÑ´Ù
 void rotate_image_cw( image im, int times )
 {
 	assert( im.w == im.h );
-	times = (times + 400) % 4;
-	int i, x, y, c;
-	int n = im.w;
-	for ( i = 0; i < times; ++i )
+	times = (times + 400) % 4;	//È¸ÀüÈ½¼ö
+	int ii, yy, xx, cc;
+	int nn = im.w;
+	// È¸Àü ¹İº¹
+	for ( ii=0; ii < times; ++ii )
 	{
-		for ( c = 0; c < im.c; ++c )
+		// »ö ¹İº¹(Ã¤³Î)
+		for ( cc=0; cc < im.c; ++cc )
 		{
-			for ( x = 0; x < n/2; ++x )
+			int cc_Bo	= im.w*im.h*cc;	// »ö °£°İ
+
+			// ¼¼·Î ¹İº¹(¼¼·ÎÆøÀÇ ¹İ¸¸ ¹İº¹)
+			for ( yy=0; yy < nn/2; ++yy )
 			{
-				for ( y = 0; y < (n-1)/2 + 1; ++y )
+				// °¡·Î ¹İº¹(°¡·ÎÆøÀÇ ¹İ¸¸ ¹İº¹)
+				for ( xx=0; xx < (nn-1)/2 + 1; ++xx )
 				{
-					float temp = im.data[y + im.w*(x + im.h*c)];
-					im.data[y + im.w*(x + im.h*c)] = im.data[n-1-x + im.w*(y + im.h*c)];
-					im.data[n-1-x + im.w*(y + im.h*c)] = im.data[n-1-y + im.w*(n-1-x + im.h*c)];
-					im.data[n-1-y + im.w*(n-1-x + im.h*c)] = im.data[x + im.w*(n-1-y + im.h*c)];
-					im.data[x + im.w*(n-1-y + im.h*c)] = temp;
+					// ½ÇÁ¦ ÀúÀåµÈ ÀÌ¹ÌÁö¹è¿­Àº »óÇÏ ¹İÀüÀÌ µÇ¾î¼­ ¹İ½Ã°è¹æÇâÀ¸·Î µ¹·Á¾ß ½Ã°è¹æÇâÀ¸·Î È¸ÀüµÊ
+					int cw000	= cc_Bo + im.w*yy + xx;						//ÇöÀçÀ§Ä¡   0µµ À§Ä¡
+					int cw090	= cc_Bo + im.w*xx + ( nn-1-yy );			//½Ã°è¹æÇâ  90µµ À§Ä¡
+					int cw180	= cc_Bo + im.w*( nn-1-yy ) + ( nn-1-xx );	//½Ã°è¹æÇâ 180µµ À§Ä¡
+					int cw270	= cc_Bo + im.w*( nn-1-xx ) + yy;			//½Ã°è¹æÇâ 270µµ À§Ä¡
+					//int cw000	= xx + im.w*(yy + im.h*cc);				//ÇöÀçÀ§Ä¡   0µµ À§Ä¡
+					//int cw090	= nn-1-yy + im.w*(xx + im.h*cc);		//½Ã°è¹æÇâ  90µµ À§Ä¡
+					//int cw180	= nn-1-xx + im.w*(nn-1-yy + im.h*cc);	//½Ã°è¹æÇâ 180µµ À§Ä¡
+					//int cw270	= yy + im.w*(nn-1-xx + im.h*cc);		//½Ã°è¹æÇâ 270µµ À§Ä¡
+
+					float temp		 = im.data[ cw000 ];	//  0µµ È­¼Ò°ªÀ» ´ã¾ÆµĞ´Ù
+					im.data[ cw000 ] = im.data[ cw090 ];	//  0µµ È­¼Ò°ªÀ»  90µµ È­¼Ò°ªÀ¸·Î º¯°æ
+					im.data[ cw090 ] = im.data[ cw180 ];	// 90µµ È­¼Ò°ªÀ» 180µµ È­¼Ò°ªÀ¸·Î º¯°æ
+					im.data[ cw180 ] = im.data[ cw270 ];	//180µµ È­¼Ò°ªÀ» 270µµ È­¼Ò°ªÀ¸·Î º¯°æ
+					im.data[ cw270 ] = temp;				//270µµ È­¼Ò°ªÀ»   0µµ È­¼Ò°ªÀ¸·Î º¯°æ
+
+					//float temp = im.data[ xx + im.w*(yy + im.h*cc) ];
+					//im.data[ xx + im.w*(yy + im.h*cc) ] = im.data[ nn-1-yy + im.w*(xx + im.h*cc) ];
+					//im.data[ nn-1-yy + im.w*(xx + im.h*cc) ] = im.data[ nn-1-xx + im.w*(nn-1-yy + im.h*cc) ];
+					//im.data[ nn-1-xx + im.w*(nn-1-yy + im.h*cc) ] = im.data[ yy + im.w*(nn-1-xx + im.h*cc) ];
+					//im.data[ yy + im.w*(nn-1-xx + im.h*cc) ] = temp;
 				}
 			}
 		}
 	}
 }
 
-void flip_image( image a )
+// ÀÌ¹ÌÁö¸¦ ÁÂ¿ì·Î µÚÁı´Â´Ù
+void flip_image( image im )
 {
-	int i, j, k;
-	for ( k = 0; k < a.c; ++k )
+	int yy, xx, cc;
+
+	// »ö ¹İº¹(Ã¤³Î)
+	for ( cc=0; cc < im.c; ++cc )
 	{
-		for ( i = 0; i < a.h; ++i )
+		int cc_Bo	= im.w*im.h*cc;	// »ö °£°İ
+
+		// ¼¼·Î ¹İº¹
+		for ( yy=0; yy < im.h; ++yy )
 		{
-			for ( j = 0; j < a.w/2; ++j )
+			// °¡·Î ¹İº¹(°¡·ÎÆøÀÇ ¹İ¸¸ ¹İº¹)
+			for ( xx=0; xx < im.w/2; ++xx )
 			{
-				int index = j + a.w*(i + a.h*(k));
-				int flip = (a.w - j - 1) + a.w*(i + a.h*(k));
-				float swap = a.data[flip];
-				a.data[flip] = a.data[index];
-				a.data[index] = swap;
+				int hw	= cc_Bo + im.w*yy + xx;					//ÇöÀçÈ­¼Ò(µÚÁıÀ») À§Ä¡
+				int dw	= cc_Bo + im.w*yy + (im.w - xx - 1);	//´ëÀÀÈ­¼Ò(¹İ´ëÂÊ) À§Ä¡
+				//int hw	= xx + im.w*(yy + im.h*(cc));				//ÇöÀçÈ­¼Ò(µÚÁıÀ») À§Ä¡
+				//int dw	= (im.w - xx - 1) + im.w*(yy + im.h*(cc));	//´ëÀÀÈ­¼Ò(¹İ´ëÂÊ) À§Ä¡
+
+				float swap	= im.data[ dw ];	//¹İ´ëÂÊ È­¼Ò°ª ´ã¾ÆµÎ±â
+				im.data[ dw ] = im.data[ hw ];	//µÚÁıÀ» È­¼Ò°ªÀ¸·Î ¹İ´ëÂÊ È¸¼Ò°ªÀ» º¯°æ
+				im.data[ hw ] = swap;			//´ã¾ÆµĞ È­¼Ò°ªÀ¸·Î ÇöÀ§Â÷ È­¼Ò°ªÀ» º¯°æ
 			}
 		}
 	}
 }
 
-image image_distance( image a, image b )
+image image_distance( image im_a, image im_b )
 {
 	int i, j;
-	image dist = make_image( a.w, a.h, 1 );
-	for ( i = 0; i < a.c; ++i )
+	image dist = make_image( im_a.w, im_a.h, 1 );
+
+	for ( i = 0; i < im_a.c; ++i )
 	{
-		for ( j = 0; j < a.h*a.w; ++j )
+		for ( j = 0; j < im_a.h*im_a.w; ++j )
 		{
-			dist.data[j] += pow( a.data[i*a.h*a.w+j]-b.data[i*a.h*a.w+j], 2 );
+			dist.data[j] += pow( im_a.data[i*im_a.h*im_a.w+j]-im_b.data[i*im_a.h*im_a.w+j], 2 );
 		}
 	}
-	for ( j = 0; j < a.h*a.w; ++j )
+
+	for ( j = 0; j < im_a.h*im_a.w; ++j )
 	{
 		dist.data[j] = sqrt( dist.data[j] );
 	}
+
 	return dist;
 }
 
-void embed_image( image source, image dest, int dx, int dy )
+void ghost_image( image src, image dst, int xs, int ys )
 {
-	int x, y, k;
-	for ( k = 0; k < source.c; ++k )
+	int xx, yy, cc;
+	float max_dist = (float)sqrt( (-src.w/2.0 + 0.5)*(-src.w/2.0 + 0.5) );
+
+	for ( cc=0; cc < src.c; ++cc )
 	{
-		for ( y = 0; y < source.h; ++y )
+		for ( yy=0; yy < src.h; ++yy )
 		{
-			for ( x = 0; x < source.w; ++x )
+			for ( xx=0; xx < src.w; ++xx )
 			{
-				float val = get_pixel( source, x, y, k );
-				set_pixel( dest, dx+x, dy+y, k, val );
+				float dist = sqrt( (xx - src.w/2.0 + 0.5)*(xx - src.w/2.0 + 0.5) +
+								   (yy - src.h/2.0 + 0.5)*(yy - src.h/2.0 + 0.5) );
+
+				float alpha = (1 - dist/max_dist);
+
+				if ( alpha < 0 ) alpha = 0;
+
+				float v1 = get_pixel( src, xx, yy, cc );
+				float v2 = get_pixel( dst, xs+xx, ys+yy, cc );
+				float val = alpha*v1 + (1-alpha)*v2;
+
+				set_pixel( dst, xs+xx, ys+yy, cc, val );
 			}
 		}
 	}
 }
 
-void BaGi_HanPan( image WonBon, image SaBon, int SiJagGaRo, int SiJagSeRo )
+// µ¢¾î¸® ÀÌ¹ÌÁö
+void blocky_image( image im, int s )
 {
-	int x, y, k;
+	int xx, yy, cc;
 
-	for ( k = 0; k < WonBon.c; ++k )			// íŒìˆ˜ë¥¼ ë°˜ë³µ
+	for ( cc=0; cc < im.c; ++cc )
 	{
-		int Bo_Pan = ( WonBon.w + 1 ) * k;
+		int cc_Bo	= im.w*im.h*cc;	// »ö °£°İ
 
-		for ( y = 0; y < WonBon.h; ++y )		// ì„¸ë¡œë¥¼ ë°˜ë³µ
+		for ( yy=0; yy < im.h; ++yy )
 		{
-			int Bo_SeRo = SaBon.w * y;
-
-			for ( x = 0; x < WonBon.w; ++x )	// ê°€ë¡œë¥¼ ë°˜ë³µ
+			for ( xx= 0; xx < im.w; ++xx )
 			{
-				int Bo_GaRo = Bo_Pan + x;
-
-				float val = get_pixel( WonBon, x, y, k );
-
-				set_pixel( SaBon, SiJagGaRo+Bo_GaRo, SiJagSeRo+Bo_SeRo, k, val );
-				//set_pixel( BogSa, SiJagGaRo+x, SiJagSeRo+y, k, val );
+				im.data[ cc_Bo + im.w*yy + xx ] = im.data[ cc_Bo + im.w*( yy / (s*s) ) + xx/(s*s) ];
+				//im.data[xx + im.w*(yy + im.h*cc)] = im.data[xx/(s*s) + im.w*(yy/(s*s) + im.h*cc)];
 			}
 		}
 	}
-
-	//BaGi_TeDuRi( WonBon, BogSa, SiJagGaRo, SiJagSeRo );	// í…Œë‘ë¦¬ë¥¼ ê·¸ë¦°ë‹¤
-
 }
 
-void BaGi_TeDuRi( image WonBon, image SaBon, int SiJagGaRo, int SiJagSeRo )
+// °Ë¿­ ÀÌ¹ÌÁö
+void censor_image( image im, int dx, int dy, int w, int h )
 {
-	int x, y, k;
+	int xx, yy, cc;
+	int s = 32;
+	if ( dx < 0 ) dx = 0;
+	if ( dy < 0 ) dy = 0;
 
-	for ( k = 0; k < WonBon.c; ++k )			// íŒìˆ˜ë¥¼ ë°˜ë³µ
+	for ( cc= 0; cc < im.c; ++cc )
 	{
-		int Bo_Pan	= k + 1;
-		int Bo_SeRo	= 0;
-		int Bo_GaRo	= 0;
+		int cc_Bo	= im.w*im.h*cc;	// »ö °£°İ
 
-		// ì„¸ë¡œ í…Œë‘ë¦¬ë¥¼ ê·¸ë¦°ë‹¤
-		for ( y = 0; y < WonBon.h; ++y )		// ì„¸ë¡œë¥¼ ë°˜ë³µ
+		for ( yy=dy; yy < dy + h && yy < im.h; ++yy )
 		{
-			Bo_GaRo = Bo_Pan * (WonBon.w + 1) -1;
-			Bo_SeRo = k * (WonBon.w + 1) -1;
-			set_pixel( SaBon, SiJagGaRo+Bo_GaRo, SiJagSeRo+Bo_SeRo + y, k, 1.0f );
-		}
-
-		// ê°€ë¡œ í…Œë‘ë¦¬ë¥¼ ê·¸ë¦°ë‹¤
-		for ( x = 0; x < WonBon.w; ++x )		// ê°€ë¡œë¥¼ ë°˜ë³µ
-		{
-			Bo_GaRo = k * (WonBon.w + 1) -1;
-			Bo_SeRo = Bo_Pan * (WonBon.w + 1) -1;
-			set_pixel( SaBon, SiJagGaRo+Bo_GaRo + x, SiJagSeRo+Bo_SeRo, k, 1.0f );
-		}
-
-	}
-}
-
-image MaGoBaGi_Pan( image *ims, int GaeSu )
-{
-	int color	= 1;
-	int SeonPog	= 1;
-
-	int GaRo	= (ims[0].w + SeonPog) * GaeSu;
-	int SeRo	= (ims[0].h + SeonPog) * GaeSu;
-	int PanSu	= ims[0].c;
-
-	if ( PanSu != 3 || !color )
-	{
-		//GaRo = (ims[0].w + SeonPog) * PanSu - SeonPog;
-		PanSu = 1;
-	}
-
-	//image filters = make_image( w, h, c );
-	image filters = make_image( GaRo, SeRo, PanSu );
-
-	int ii, jj;
-	int GaRo_Bo = 0;
-	int SeRo_Bo = 0;
-
-	for ( ii=0; ii<GaeSu; ++ii )				// ì…ë ¥ íŒìˆ˜ë¥¼ ë°˜ë³µí•œë‹¤
-	{
-		//SeRo_Bo = i * ( ims[0].h + border );
-		SeRo_Bo = GaRo * ( ims[0].h + SeonPog ) * ii;
-
-		image copy = copy_image( ims[ii] );	// í¬ì§‘ê°€ì¤‘ê°’ì„ í•œíŒì”© ë³µì‚¬
-		//normalize_image(copy);
-		if ( PanSu == 3 && color )
-		{
-			//embed_image( copy, filters, 0, h_offset );
-			BaGi_HanPan( copy, filters, 0, SeRo_Bo );
-		}
-		else
-		{
-			for ( jj=0; jj<copy.c; ++jj )	// ì¶œë ¥ íŒìˆ˜ë¥¼ ë°˜ë³µí•œë‹¤
+			for ( xx=dx; xx < dx + w && xx < im.w; ++xx )
 			{
-				GaRo_Bo = ( ims[0].w + SeonPog ) * jj;
-
-				image layer = get_image_layer( copy, jj );
-				//embed_image( layer, filters, GaRo_Bo, SeRo_Bo );
-				BaGi_HanPan( layer, filters, GaRo_Bo, SeRo_Bo );
-				free_image( layer );
+				im.data[ cc_Bo + im.w*yy + xx ] = im.data[ cc_Bo + im.w*( yy / (s*s) ) + xx/(s*s) ];
+				//im.data[xx + im.w*(yy + im.h*cc)] = im.data[xx/s*s + im.w*(yy/s*s + im.h*cc)];
+				//im.data[xx + j*im.w + cc*im.w*im.h] = 0;
 			}
 		}
-
-		free_image( copy );
 	}
-
-	return filters;
 }
 
+// ¿øº»ÀÌ¹ÌÁö¸¦ »çº»ÀÌ¹ÌÁö¿¡ ¼Ò¹ÚÀÌÇÑ´Ù
+void embed_image( image source, image dest, int xs, int ys )
+{
+	int xx, yy, cc;
+
+	for ( cc=0; cc < source.c; ++cc )
+	{
+		for ( yy=0; yy < source.h; ++yy )
+		{
+			for ( xx=0; xx < source.w; ++xx )
+			{
+				float val = get_pixel( source, xx, yy, cc );
+				set_pixel( dest, xs+xx, ys+yy, cc, val );
+			}
+		}
+	}
+}
+// ¿øº»ÀÌ¹ÌÁö¸¦ »çº»ÀÌ¹ÌÁö¿¡ ¼Ò¹ÚÀÌÇÑ´Ù
+void SoBaGi_image( image WonBon, image SaBon, int Bo_GaRo, int Bo_SeRo, int nWiChi )
+{
+	int nPanSu		= SaBon.w / Bo_GaRo;	// ÇÑº¯¿¡ µé¾î°¥ Æ÷ÁıÆÇ °³¼ö
+	int xx, yy, cc;
+
+	//int iMok		= (nWiChi * WonBon.c) / nPanSu;		// ¸ò
+	//int iNaMeoJi	= (nWiChi * WonBon.c) % nPanSu;		// ³ª¸ÓÁö
+
+	//int SiJakGaRo	= iNaMeoJi * Bo_GaRo;
+	//int SiJakSeRo	= iMok * Bo_SeRo;
+
+	for ( cc=0; cc < WonBon.c; ++cc )			// ÆÇ¼ö¸¦ ¹İº¹
+	{
+		int iMok		= (nWiChi * WonBon.c + cc) / nPanSu;		// ¸ò
+		int iNaMeoJi	= (nWiChi * WonBon.c + cc) % nPanSu;		// ³ª¸ÓÁö
+
+		int SiJakGaRo	= iNaMeoJi * Bo_GaRo;
+		int SiJakSeRo	= iMok * Bo_SeRo;
+
+		for ( yy=0; yy < WonBon.h; ++yy )		// ¼¼·Î¸¦ ¹İº¹
+		{
+			for ( xx=0; xx < WonBon.w; ++xx )	// °¡·Î¸¦ ¹İº¹
+			{
+				float val = get_pixel( WonBon, xx, yy, cc );
+
+				set_pixel( SaBon, SiJakGaRo+xx, SiJakSeRo+yy, 0, val );
+			}
+		}
+	}
+}
+
+//
 image collapse_image_layers( image source, int border )
 {
 	int h = source.h;
 	h = (h+border)*source.c - border;
 	image dest = make_image( source.w, h, 1 );
+
 	int i;
 	for ( i = 0; i < source.c; ++i )
 	{
@@ -555,122 +671,82 @@ image collapse_image_layers( image source, int border )
 	}
 	return dest;
 }
-
-image collapse_images_vert( image *ims, int n )
-{
-	int color = 1;
-	int border = 1;
-	int h, w, c;
-	w = ims[0].w;
-	h = (ims[0].h + border) * n - border;
-	c = ims[0].c;
-
-	if ( c != 3 || !color )
-	{
-		w = (w+border)*c - border;
-		c = 1;
-	}
-
-	image filters = make_image( w, h, c );
-	int i, j;
-	// íŒìˆ˜ë¥¼ ë°˜ë³µí•œë‹¤
-	for ( i = 0; i < n; ++i )
-	{
-		int h_offset = i*(ims[0].h+border);
-		image copy = copy_image( ims[i] );	// í¬ì§‘ê°€ì¤‘ê°’ì„ í•œíŒì”© ë³µì‚¬
-		//normalize_image(copy);
-		if ( c == 3 && color )
-		{
-			embed_image( copy, filters, 0, h_offset );
-		}
-		else
-		{
-			for ( j = 0; j < copy.c; ++j )
-			{
-				int w_offset = j*(ims[0].w+border);
-				image layer = get_image_layer( copy, j );
-				embed_image( layer, filters, w_offset, h_offset );
-				free_image( layer );
-			}
-		}
-
-		free_image( copy );
-	}
-
-	return filters;
-}
-
-image collapse_images_horz( image *ims, int n )
-{
-	int color = 1;
-	int border = 1;
-	int h, w, c;
-	int size = ims[0].h;
-	h = size;
-	w = (ims[0].w + border) * n - border;
-	c = ims[0].c;
-	if ( c != 3 || !color )
-	{
-		h = (h+border)*c - border;
-		c = 1;
-	}
-
-	image filters = make_image( w, h, c );
-	int i, j;
-	for ( i = 0; i < n; ++i )
-	{
-		int w_offset = i*(size+border);
-		image copy = copy_image( ims[i] );
-		//normalize_image(copy);
-		if ( c == 3 && color )
-		{
-			embed_image( copy, filters, w_offset, 0 );
-		}
-		else
-		{
-			for ( j = 0; j < copy.c; ++j )
-			{
-				int h_offset = j*(size+border);
-				image layer = get_image_layer( copy, j );
-				embed_image( layer, filters, w_offset, h_offset );
-				free_image( layer );
-			}
-		}
-		free_image( copy );
-	}
-	return filters;
-}
-
+// ÀÚ·á°ªÀ» 0~1 »çÀÌ°ªÀ¸·Î Á¦ÇÑÇÑ´Ù
 void constrain_image( image im )
 {
-	int i;
-	for ( i = 0; i < im.w*im.h*im.c; ++i )
+	int ii;
+	for ( ii=0; ii < im.w*im.h*im.c; ++ii )
 	{
-		if ( im.data[i] < 0 ) im.data[i] = 0;
-		if ( im.data[i] > 1 ) im.data[i] = 1;
+		if ( im.data[ii] < 0 ) im.data[ii] = 0;
+		if ( im.data[ii] > 1 ) im.data[ii] = 1;
 	}
 }
-
+// ÀÌ¹ÌÁöÇÏ³ª¿¡¼­ ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» ¾Ë¾Æ³»°í °í¸£±â¸¦ ÇÑ´Ù
 void normalize_image( image p )
 {
-	int i;
-	float min = 9999999;
-	float max = -999999;
-
-	for ( i = 0; i < p.h*p.w*p.c; ++i )
+	int ii;
+	float min = 9999999.0f;
+	float max = -999999.0f;
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» ¾Ë¾Æ³½´Ù
+	for ( ii=0; ii < p.h*p.w*p.c; ++ii )
 	{
-		float v = p.data[i];
+		float v = p.data[ii];
 		if ( v < min ) min = v;
 		if ( v > max ) max = v;
 	}
-	if ( max - min < .000000001 )
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ª Â÷ÀÌ°¡ ³Ê¹« ÀÛÀ¸¸é 1, 0 À¸·Î º¸Á¤ÇÑ´Ù
+	if ( max - min < 0.000000001f )
 	{
-		min = 0;
-		max = 1;
+		min = 0.0f;
+		max = 1.0f;
 	}
-	for ( i = 0; i < p.c*p.w*p.h; ++i )
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» °í¸¥´Ù
+	for ( ii=0; ii < p.c*p.w*p.h; ++ii )
 	{
-		p.data[i] = (p.data[i] - min)/(max-min);
+		p.data[ii] = ( p.data[ii]-min ) / ( max-min );
+	}
+}
+// ÀÌ¹ÌÁö¹«¸®¿¡¼­ ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» ¾Ë¾Æ³»°í °í¸£±â¸¦ ÇÑ´Ù
+void normalize_image_MuRi( image *pImage, int iPanSu )
+{
+	int ii, jj;
+	float min = 9999999.0f;
+	float max = -999999.0f;
+
+	image img = pImage[0];
+	int BanBok	= img.h * img.w * img.c;
+
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» ¾Ë¾Æ³½´Ù
+	for ( jj=0; jj<iPanSu; ++jj )
+	{
+		img	= pImage[jj];
+
+		//int BanBok	= img.h * img.w * img.c;
+
+		for ( ii=0; ii < BanBok; ++ii )
+		{
+			float v = img.data[ii];
+			if ( v < min ) min = v;
+			if ( v > max ) max = v;
+		}
+	}
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ª Â÷ÀÌ°¡ ³Ê¹« ÀÛÀ¸¸é 1, 0 À¸·Î º¸Á¤ÇÑ´Ù
+	if ( max - min < 0.000000001f )
+	{
+		min = 0.0f;
+		max = 1.0f;
+	}
+	// ÃÖ´ë°ª°ú ÃÖ¼Ò°ªÀ» °í¸¥´Ù
+	for ( jj=0; jj<iPanSu; ++jj )
+	{
+		img	= pImage[jj];
+
+		//int BanBok	= img.h * img.w * img.c;
+
+		for ( ii=0; ii < BanBok; ++ii )
+		{
+			img.data[ii] = (img.data[ii]-min) / (max-min);
+		}
 	}
 }
 
@@ -678,6 +754,7 @@ void normalize_image2( image p )
 {
 	float *min = calloc( p.c, sizeof( float ) );
 	float *max = calloc( p.c, sizeof( float ) );
+
 	int i, j;
 	for ( i = 0; i < p.c; ++i ) min[i] = max[i] = p.data[i*p.h*p.w];
 
@@ -690,14 +767,16 @@ void normalize_image2( image p )
 			if ( v > max[j] ) max[j] = v;
 		}
 	}
+
 	for ( i = 0; i < p.c; ++i )
 	{
-		if ( max[i] - min[i] < .000000001 )
+		if ( max[i] - min[i] < 0.000000001f )
 		{
 			min[i] = 0;
 			max[i] = 1;
 		}
 	}
+
 	for ( j = 0; j < p.c; ++j )
 	{
 		for ( i = 0; i < p.w*p.h; ++i )
@@ -705,214 +784,215 @@ void normalize_image2( image p )
 			p.data[i+j*p.h*p.w] = (p.data[i+j*p.h*p.w] - min[j])/(max[j]-min[j]);
 		}
 	}
+
 	free( min );
 	free( max );
 }
 
+void copy_image_into( image src, image dest )
+{
+	memcpy( dest.data, src.data, src.h*src.w*src.c*sizeof( float ) );
+}
+// ´ã¾ÆµÑ ¸Ş¸ğ¸®¸¦ ÇÒ´çÇÏ°í, ÀÚ·á°ªÀ» º¹»çÇÏ°í, ´ã¾ÆµĞ ÁÖ¼Ò¸¦ ¹İÈ¯ÇÑ´Ù
 image copy_image( image p )
 {
 	image copy = p;
-	copy.data = calloc( p.h*p.w*p.c, sizeof( float ) );
-	memcpy( copy.data, p.data, p.h*p.w*p.c*sizeof( float ) );
+	//copy.data = calloc( p.h*p.w*p.c, sizeof( float ) );
+	//memcpy( copy.data, p.data, p.h*p.w*p.c*sizeof( float ) );
+
+	int Sul	= p.h*p.w*p.c;	// º¹»çÇÒ ÀÚ·áÅ©±â
+	copy.data = calloc( Sul, sizeof( float ) );
+	memcpy( copy.data, p.data, Sul * sizeof( float ) );
+
 	return copy;
 }
-
+// RGB ÀÌ¹ÌÁö¸¦ BGR ÀÌ¹ÌÁö·Î º¯È¯???
 void rgbgr_image( image im )
 {
-	int i;
-	for ( i = 0; i < im.w*im.h; ++i )
+	int ii;
+	for ( ii=0; ii < im.w*im.h; ++ii )
 	{
-		float swap = im.data[i];
-		im.data[i] = im.data[i+im.w*im.h*2];
-		im.data[i+im.w*im.h*2] = swap;
+		float swap	= im.data[ii];					// R °ªÀ» ´ã¾ÆµĞ´Ù
+		im.data[ii]	= im.data[ im.w*im.h*2 + ii ];	// B °ªÀ» R °ª¿¡ ±â·Ï
+		im.data[ im.w*im.h*2 + ii ] = swap;			// ´ã¾ÆµĞ R °ªÀ» B °ª¿¡ ±â·Ï
 	}
 }
 
 #ifdef OPENCV
-void show_image_cv( image p, const char *name )
+//
+void show_image_cv( image p, const char *name, IplImage *disp )
 {
-	int x, y, k;
-	image copy = copy_image( p );
-	constrain_image( copy );
-	if ( p.c == 3 ) rgbgr_image( copy );
+	int xx, yy, cc;
+	if ( p.c == 3 ) rgbgr_image( p );
 	//normalize_image(copy);
 
 	char buff[256];
-	//sprintf(buff, "%s (%d)", name, windows);
+	//sprintf( buff, "%s (%d)", name, windows );
 	//sprintf( buff, "%s", name );
 	sprintf_s( buff, 256, "%s", name );
 
-	IplImage *disp = cvCreateImage( cvSize( p.w, p.h ), IPL_DEPTH_8U, p.c );
 	int step = disp->widthStep;
 	cvNamedWindow( buff, CV_WINDOW_NORMAL );
 	//cvMoveWindow(buff, 100*(windows%10) + 200*(windows/10), 100*(windows%10));
 	++windows;
-	for ( y = 0; y < p.h; ++y )
+	// ½Ç¼ö°ªÀ» Á¤¼ö°ªÀ¸·Î º¯È¯
+	for ( yy=0; yy < p.h; ++yy )
 	{
-		for ( x = 0; x < p.w; ++x )
+		for ( xx=0; xx < p.w; ++xx )
 		{
-			for ( k= 0; k < p.c; ++k )
+			for ( cc=0; cc < p.c; ++cc )
 			{
-				disp->imageData[y*step + x*p.c + k] = (unsigned char)(get_pixel( copy, x, y, k )*255);
+				disp->imageData[yy*step + xx*p.c + cc] = (unsigned char)(get_pixel( p, xx, yy, cc )*255);
 			}
 		}
 	}
-	free_image( copy );
+
 	if ( 0 )
 	{
 		int w = 448;
 		int h = w*p.h/p.w;
+
 		if ( h > 1000 )
 		{
 			h = 1000;
 			w = h*p.w/p.h;
 		}
+
 		IplImage *buffer = disp;
 		disp = cvCreateImage( cvSize( w, h ), buffer->depth, buffer->nChannels );
 		cvResize( buffer, disp, CV_INTER_LINEAR );
 		cvReleaseImage( &buffer );
 	}
+
 	cvShowImage( buff, disp );
-
-	cvReleaseImage( &disp );
-}
-
-
-void show_image_cv_ipl( IplImage *disp, const char *name, const char *out_filename )
-{
-	if ( disp == NULL ) return;
-	char buff[256];
-	//sprintf(buff, "%s (%d)", name, windows);
-	//sprintf( buff, "%s", name );
-	sprintf_s( buff, 256, "%s", name );
-
-	cvNamedWindow( buff, CV_WINDOW_NORMAL );
-	//cvMoveWindow(buff, 100*(windows%10) + 200*(windows/10), 100*(windows%10));
-	++windows;
-	cvShowImage( buff, disp );
-
-	if ( out_filename )
-	{
-		CvSize size;
-		{
-			size.width = disp->width, size.height = disp->height;
-		}
-
-		static CvVideoWriter* output_video = NULL;    // cv::VideoWriter output_video;
-		if ( output_video == NULL )
-		{
-			//const char* output_name = "test_dnn_out.avi";
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('H', '2', '6', '4'), 25, size, 1);
-			output_video = cvCreateVideoWriter( out_filename, CV_FOURCC( 'D', 'I', 'V', 'X' ), 25, size, 1 );
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('M', 'J', 'P', 'G'), 25, size, 1);
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('M', 'P', '4', 'V'), 25, size, 1);
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('M', 'P', '4', '2'), 25, size, 1);
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('X', 'V', 'I', 'D'), 25, size, 1);
-			//output_video = cvCreateVideoWriter(out_filename, CV_FOURCC('W', 'M', 'V', '2'), 25, size, 1);
-		}
-
-		cvWriteFrame( output_video, disp );	// comment this line to improve FPS !!!
-		printf( "\n cvWriteFrame \n" );
-	}
-
-	cvReleaseImage( &disp );
 }
 #endif
 
 void show_image( image p, const char *name )
 {
 	#ifdef OPENCV
-	show_image_cv( p, name );
+	IplImage *disp	= cvCreateImage( cvSize( p.w, p.h ), IPL_DEPTH_8U, p.c );
+	image copy		= copy_image( p );
+	constrain_image( copy );			//ÀÚ·á°ªÀ» 0~1 »çÀÌ°ªÀ¸·Î Á¦ÇÑÇÑ´Ù
+	show_image_cv( copy, name, disp );
+	free_image( copy );
+	cvReleaseImage( &disp );
+
 	#else
-	//fprintf( stderr, "Not compiled with OpenCV, saving to %s.png instead\n", name );
-	fprintf( stderr, "OpenCV ë¡œ ì»´íŒŒì¼ë˜ì§€ ì•ŠìŒ, ëŒ€ì‹ ì— %s.png ë¡œ ì €ì¥í•¨.\n", name );
+	fprintf( stderr
+	//	, "Not compiled with OpenCV, saving to %s.png instead\n"	//  [7/12/2018 jobs]
+		, "OpenCV·Î ÄÄÆÄÀÏ ¾ÈµÊ, ´ë½Å¿¡ %s.png ·Î ÀúÀå\n"	//  [7/12/2018 jobs]
+		, name );
 	save_image( p, name );
+
 	#endif
 }
 
 #ifdef OPENCV
-
-image ipl_to_image( IplImage* src )
+// OpenCVÀÇ IplImage ±¸Á¶ ÀÌ¹ÌÁö °ªÀ» ½Ç¼ö·Î º¯È¯ÇÏ¿© image ±¸Á¶ÀÇ °ª¿¡ º¹»ç
+void ipl_into_image( IplImage* src, image im )
 {
 	unsigned char *data = (unsigned char *)src->imageData;
-	int h = src->height;
-	int w = src->width;
-	int c = src->nChannels;
+	int hh	 = src->height;
+	int ww	 = src->width;
+	int cc	 = src->nChannels;
 	int step = src->widthStep;
-	image out = make_image( w, h, c );
-	int i, j, k, count=0;;
+	int yy, xx, kk;
 
-	for ( k= 0; k < c; ++k )
+	for ( yy=0; yy < hh; ++yy )
 	{
-		for ( i = 0; i < h; ++i )
+		for ( kk=0; kk < cc; ++kk )
 		{
-			for ( j = 0; j < w; ++j )
+			for ( xx=0; xx < ww; ++xx )
 			{
-				out.data[count++] = data[i*step + j*c + k]/255.;
+				//image[ »ö		  + Çà	  + ¿­ ] =	Ipl[ Çà		 + ¿­	 + »ö ]
+				im.data[ kk*ww*hh + yy*ww + xx ] = data[ yy*step + xx*cc + kk ]/255.0f;
 			}
 		}
 	}
+}
+// IplImage ±¸Á¶ ÀÌ¹ÌÁö¸¦ image ±¸Á¶ ÀÌ¹ÌÁö·Î º¹»çÇÏ¿© ¹İÈ¯ÇÑ´Ù
+image ipl_to_image( IplImage* src )
+{
+	int h = src->height;
+	int w = src->width;
+	int c = src->nChannels;
+	image out = make_image( w, h, c );
+	ipl_into_image( src, out );
 	return out;
 }
-
+// ÀÌ¹ÌÁö¸¦ OpenCV·Î Å¾ÀçÇÏ°í image ÀÚ·á±¸Á¶·Î º¯È¯ÇÏ¿© ¹İÈ¯ÇÑ´Ù
 image load_image_cv( char *filename, int channels )
 {
 	IplImage* src = 0;
 	int flag = -1;
-	if ( channels == 0 ) flag = -1;
+
+	if		( channels == 0 ) flag = -1;
 	else if ( channels == 1 ) flag = 0;
 	else if ( channels == 3 ) flag = 1;
 	else
 	{
-		fprintf( stderr, "OpenCV can't force load with %d channels\n", channels );
+		//fprintf( stderr, "OpenCV can't force load with %d channels\n", channels );	//  [7/6/2018 jobs]
+		fprintf( stderr, "OpenCV´Â %d Ã¤³Î·Î °­Á¦Å¾ÀçÇÒ ¼ö ¾øÀ½!\n", channels );	//  [7/6/2018 jobs]
 	}
 
 	if ( (src = cvLoadImage( filename, flag )) == 0 )
 	{
-		fprintf( stderr, "Cannot load image \"%s\"\n", filename );
+		//fprintf( stderr, "Cannot load image \"%s\"\n", filename );	//  [7/6/2018 jobs]
+		fprintf( stderr, "\"%s\" ÀÌ¹ÌÁö¸¦ Å¾ÀçÇÏÁö ¸øÇÔ!\n", filename );	//  [7/6/2018 jobs]
+
 		char buff[256];
 		//sprintf( buff, "echo %s >> bad.list", filename );
-		sprintf_s( buff, 256, "echo %s >> bad.list", filename );
+		//sprintf_s( buff, 256, "echo %s >> bad.list", filename );	//  [7/6/2018 jobs]
+		sprintf_s( buff, 256, "echo %s >> Àß¸øµÈ.¸ñ·Ï", filename );	//  [7/6/2018 jobs]
 
 		system( buff );
 		return make_image( 10, 10, 3 );
 		//exit(0);
 	}
 
-	image out = ipl_to_image( src );
-	cvReleaseImage( &src );
-	rgbgr_image( out );
+	image out = ipl_to_image( src );	// ÀÚ·á¸¦ Á÷Á¢ Á¦¾îÇÏ±â À§ÇØ º¯È¯
+	cvReleaseImage( &src );				// OpenCV ÀÌ¹ÌÁö·Î ÇÒ´çÇÑ ¸Ş¸ğ¸® ÇØÁ¦
+	rgbgr_image( out );					// RGB ÀÌ¹ÌÁö¸¦ BGR ÀÌ¹ÌÁö·Î º¯È¯
+
 	return out;
 }
 
+void flush_stream_buffer( CvCapture *cap, int n )
+{
+	int i;
+	for ( i = 0; i < n; ++i )
+	{
+		cvQueryFrame( cap );
+	}
+}
+// µ¿¿µ»ó¿¡¼­ ÇÑÀå¸éÀ» IplImage ±¸Á¶·Î Æ÷È¹ÇÏ¿© image ±¸Á¶·Î º¯È¯ÇÏ¿© ¹İÈ¯ÇÑ´Ù
 image get_image_from_stream( CvCapture *cap )
 {
 	IplImage* src = cvQueryFrame( cap );
+
 	if ( !src ) return make_empty_image( 0, 0, 0 );
+
 	image im = ipl_to_image( src );
 	rgbgr_image( im );
+
 	return im;
 }
 
-image get_image_from_stream_resize( CvCapture *cap, int w, int h, IplImage** in_img )
+int fill_image_from_stream( CvCapture *cap, image im )
 {
 	IplImage* src = cvQueryFrame( cap );
-	if ( !src ) return make_empty_image( 0, 0, 0 );
-	IplImage* new_img = cvCreateImage( cvSize( w, h ), IPL_DEPTH_8U, 3 );
-	*in_img = cvCreateImage( cvSize( src->width, src->height ), IPL_DEPTH_8U, 3 );
-	cvResize( src, *in_img, CV_INTER_LINEAR );
-	cvResize( src, new_img, CV_INTER_LINEAR );
-	image im = ipl_to_image( new_img );
-	cvReleaseImage( &new_img );
+	if ( !src ) return 0;
+	ipl_into_image( src, im );
 	rgbgr_image( im );
-	return im;
+	return 1;
 }
 
 void save_image_jpg( image p, const char *name )
 {
 	image copy = copy_image( p );
 	if ( p.c == 3 ) rgbgr_image( copy );
-	int x, y, k;
+	int xx, yy, cc;
 
 	char buff[256];
 	//sprintf( buff, "%s.jpg", name );
@@ -920,16 +1000,18 @@ void save_image_jpg( image p, const char *name )
 
 	IplImage *disp = cvCreateImage( cvSize( p.w, p.h ), IPL_DEPTH_8U, p.c );
 	int step = disp->widthStep;
-	for ( y = 0; y < p.h; ++y )
+
+	for ( yy=0; yy < p.h; ++yy )
 	{
-		for ( x = 0; x < p.w; ++x )
+		for ( xx=0; xx < p.w; ++xx )
 		{
-			for ( k= 0; k < p.c; ++k )
+			for ( cc=0; cc < p.c; ++cc )
 			{
-				disp->imageData[y*step + x*p.c + k] = (unsigned char)(get_pixel( copy, x, y, k )*255);
+				disp->imageData[yy*step + xx*p.c + cc] = (unsigned char)(get_pixel( copy, xx, yy, cc )*255);
 			}
 		}
 	}
+
 	cvSaveImage( buff, disp, 0 );
 	cvReleaseImage( &disp );
 	free_image( copy );
@@ -939,7 +1021,7 @@ void save_image_jpg( image p, const char *name )
 void save_image_png( image im, const char *name )
 {
 	char buff[256];
-	//sprintf(buff, "%s (%d)", name, windows);
+	//sprintf( buff, "%s (%d)", name, windows );
 	//sprintf( buff, "%s.png", name );
 	sprintf_s( buff, 256, "%s.png", name );
 	unsigned char *data = calloc( im.w*im.h*im.c, sizeof( char ) );
@@ -957,7 +1039,8 @@ void save_image_png( image im, const char *name )
 	free( data );
 
 	if ( !success )
-		fprintf( stderr, "Failed to write image %s\n", buff );
+	//	fprintf( stderr, "Failed to write image %s\n", buff );	//  [7/6/2018 jobs]
+		fprintf( stderr, "%s ÀÌ¹ÌÁö ±â·Ï½ÇÆĞ!\n", buff );	//  [7/6/2018 jobs]
 }
 
 void save_image( image im, const char *name )
@@ -990,17 +1073,19 @@ void show_image_collapsed( image p, char *name )
 	show_image( c, name );
 	free_image( c );
 }
-// ê°€ë¡œ, ì„¸ë¡œ, íŒìˆ˜ë¥¼ ì„¤ì •
+
+// ºó ÀÌ¹ÌÁö(¸Ş¸ğ¸®¹è¿­ ÇÒ´ç¾ÈÇÔ)¸¦ ¸¸µç´Ù
 image make_empty_image( int w, int h, int c )
 {
 	image out;
-	out.data = 0;	// ë°ì´íƒ€ ì£¼ì†Œë¥¼ 0 ìœ¼ë¡œ ì„¤ì •
+	out.data = 0;
 	out.h = h;
 	out.w = w;
 	out.c = c;
 	return out;
 }
 
+// ÀÌ¹ÌÁö¹è¿­ÀÇ ¸Ş¸ğ¸® ÇÒ´ç
 image make_image( int w, int h, int c )
 {
 	image out = make_empty_image( w, h, c );
@@ -1008,6 +1093,7 @@ image make_image( int w, int h, int c )
 	return out;
 }
 
+// ÀÌ¹ÌÁö¹è¿­ÀÇ ¸Ş¸ğ¸® ÇÒ´çÇÏ°í °ªÀ» »Ñ¸°´Ù
 image make_random_image( int w, int h, int c )
 {
 	image out = make_empty_image( w, h, c );
@@ -1015,11 +1101,12 @@ image make_random_image( int w, int h, int c )
 	int i;
 	for ( i = 0; i < w*h*c; ++i )
 	{
-		out.data[i] = (rand_normal() * .25) + .5;
+		out.data[i] = (rand_normal() * 0.25f) + 0.5f;
 	}
 	return out;
 }
 
+// ÀÚ·á¹è¿­ÀÇ ÁÖ¼Ò¸¦ º¹»çÇÔ(ÀÌ¹ÌÁö¿¡ Ã¤³Î, °¡·Î, ¼¼·Î Á¤º¸¸¦ Ãß°¡ÇÔ)
 image float_to_image( int w, int h, int c, float *data )
 {
 	image out = make_empty_image( w, h, c );
@@ -1027,22 +1114,51 @@ image float_to_image( int w, int h, int c, float *data )
 	return out;
 }
 
+void place_image( image im, int ww, int hh, int dx, int dy, image canvas )
+{
+	int xx, yy, cc;
 
-image rotate_crop_image( image im, float rad, float s, int w, int h
-						, float dx, float dy, float aspect )
+	for ( cc=0; cc < im.c; ++cc )
+	{
+		for ( yy=0; yy < hh; ++yy )
+		{
+			for ( xx=0; xx < ww; ++xx )
+			{
+				float rx = ((float)xx / ww) * im.w;
+				float ry = ((float)yy / hh) * im.h;
+				float val = bilinear_interpolate( im, rx, ry, cc );
+				set_pixel( canvas, xx + dx, yy + dy, cc, val );
+			}
+		}
+	}
+}
+
+image center_crop_image( image im, int w, int h )
+{
+	int m = (im.w < im.h) ? im.w : im.h;
+	image c = crop_image( im, (im.w - m) / 2, (im.h - m)/2, m, m );
+	image r = resize_image( c, w, h );
+	free_image( c );
+	return r;
+}
+
+image rotate_crop_image( image im, float rad, float s, int w, int h, float dx, float dy, float aspect )
 {
 	int x, y, c;
-	float cx = im.w/2.;
-	float cy = im.h/2.;
+	float cx = (float)im.w / 2.0f;
+	float cy = (float)im.h / 2.0f;
 	image rot = make_image( w, h, im.c );
+
 	for ( c = 0; c < im.c; ++c )
 	{
 		for ( y = 0; y < h; ++y )
 		{
 			for ( x = 0; x < w; ++x )
 			{
-				float rx = cos( rad )*((x - w/2.)/s*aspect + dx/s*aspect) - sin( rad )*((y - h/2.)/s + dy/s) + cx;
-				float ry = sin( rad )*((x - w/2.)/s*aspect + dx/s*aspect) + cos( rad )*((y - h/2.)/s + dy/s) + cy;
+				float rx = (float)( cos( rad )*( (x - w/2.0)/s*aspect + dx/s*aspect ) -
+									sin( rad )*( (y - h/2.0)/s + dy/s ) + cx );
+				float ry = (float)( sin( rad )*( (x - w/2.0)/s*aspect + dx/s*aspect ) +
+									cos( rad )*( (y - h/2.0)/s + dy/s ) + cy );
 				float val = bilinear_interpolate( im, rx, ry, c );
 				set_pixel( rot, x, y, c, val );
 			}
@@ -1057,6 +1173,7 @@ image rotate_image( image im, float rad )
 	float cx = im.w/2.;
 	float cy = im.h/2.;
 	image rot = make_image( im.w, im.h, im.c );
+
 	for ( c = 0; c < im.c; ++c )
 	{
 		for ( y = 0; y < im.h; ++y )
@@ -1071,6 +1188,12 @@ image rotate_image( image im, float rad )
 		}
 	}
 	return rot;
+}
+// ÀÌ¹ÌÁö ÀÚ·á°ª ÁöÁ¤ÇÑ °ªÀ¸·Î Ã¤¿î´Ù
+void fill_image( image m, float s )
+{
+	int i;
+	for ( i = 0; i < m.h*m.w*m.c; ++i ) m.data[i] = s;
 }
 
 void translate_image( image m, float s )
@@ -1100,10 +1223,7 @@ image crop_image( image im, int dx, int dy, int w, int h )
 				float val = 0;
 				r = constrain_int( r, 0, im.h-1 );
 				c = constrain_int( c, 0, im.w-1 );
-				if ( r >= 0 && r < im.h && c >= 0 && c < im.w )
-				{
-					val = get_pixel( im, c, r, k );
-				}
+				val = get_pixel( im, c, r, k );
 				set_pixel( cropped, i, j, k, val );
 			}
 		}
@@ -1176,6 +1296,7 @@ void composite_3d( char *f1, char *f2, char *out, int delta )
 	{
 		c.data[i] = a.data[i];
 	}
+
 	#ifdef OPENCV
 	save_image_jpg( c, out );
 	#else
@@ -1183,52 +1304,51 @@ void composite_3d( char *f1, char *f2, char *out, int delta )
 	#endif
 }
 
-void fill_image( image m, float s )
-{
-	int i;
-	for ( i = 0; i < m.h*m.w*m.c; ++i ) m.data[i] = s;
-}
-
-void letterbox_image_into( image im, int w, int h, image boxed )
+void letterbox_image_into( image im, int ww, int hh, image boxed )
 {
 	int new_w = im.w;
 	int new_h = im.h;
-	if ( ((float)w / im.w) < ((float)h / im.h) )
+
+	if ( ((float)ww/im.w) < ((float)hh/im.h) )
 	{
-		new_w = w;
-		new_h = (im.h * w) / im.w;
+		new_w = ww;
+		new_h = (im.h * ww)/im.w;
 	}
 	else
 	{
-		new_h = h;
-		new_w = (im.w * h) / im.h;
+		new_h = hh;
+		new_w = (im.w * hh)/im.h;
 	}
+
 	image resized = resize_image( im, new_w, new_h );
-	embed_image( resized, boxed, (w - new_w) / 2, (h - new_h) / 2 );
+	embed_image( resized, boxed, (ww-new_w)/2, (hh-new_h)/2 );
 	free_image( resized );
 }
 
-image letterbox_image( image im, int w, int h )
+image letterbox_image( image im, int ww, int hh )
 {
-	int new_w = im.w;
-	int new_h = im.h;
-	if ( ((float)w / im.w) < ((float)h / im.h) )
+	int new_w = im.w;	// ÀÔ·ÂÀÚ·á ³Êºñ
+	int new_h = im.h;	// ÀÔ·ÂÀÚ·á ³ôÀÌ
+
+	if ( ((float)ww/im.w) < ((float)hh/im.h) )
 	{
-		new_w = w;
-		new_h = (im.h * w) / im.w;
+		new_w = ww;
+		new_h = (im.h * ww)/im.w;
 	}
 	else
 	{
-		new_h = h;
-		new_w = (im.w * h) / im.h;
+		new_h = hh;
+		new_w = (im.w * hh)/im.h;
 	}
-	image resized = resize_image( im, new_w, new_h );
-	image boxed = make_image( w, h, im.c );
-	fill_image( boxed, .5 );
+
+	image resized	= resize_image( im, new_w, new_h );
+	image boxed		= make_image( ww, hh, im.c );
+	fill_image( boxed, 0.5f );
 	//int i;
 	//for(i = 0; i < boxed.w*boxed.h*boxed.c; ++i) boxed.data[i] = 0;
-	embed_image( resized, boxed, (w - new_w) / 2, (h - new_h) / 2 );
+	embed_image( resized, boxed, (ww-new_w)/2, (hh-new_h)/2 );
 	free_image( resized );
+
 	return boxed;
 }
 
@@ -1278,8 +1398,15 @@ image random_crop_image( image im, int w, int h )
 	return crop;
 }
 
-image random_augment_image( image im, float angle, float aspect, int low, int high, int size )
+augment_args random_augment_args( image im
+								, float angle
+								, float aspect
+								, int low
+								, int high
+								, int w
+								, int h )
 {
+	augment_args a = { 0 };
 	aspect = rand_scale( aspect );
 	int r = rand_int( low, high );
 	int min = (im.h < im.w*aspect) ? im.h : im.w*aspect;
@@ -1287,15 +1414,46 @@ image random_augment_image( image im, float angle, float aspect, int low, int hi
 
 	float rad = rand_uniform( -angle, angle ) * TWO_PI / 360.;
 
-	float dx = (im.w*scale/aspect - size) / 2.;
-	float dy = (im.h*scale - size) / 2.;
-	if ( dx < 0 ) dx = 0;
-	if ( dy < 0 ) dy = 0;
+	float dx = (im.w*scale/aspect - w) / 2.;
+	float dy = (im.h*scale - w) / 2.;
+	//if(dx < 0) dx = 0;
+	//if(dy < 0) dy = 0;
 	dx = rand_uniform( -dx, dx );
 	dy = rand_uniform( -dy, dy );
 
-	image crop = rotate_crop_image( im, rad, scale, size, size, dx, dy, aspect );
+	a.rad = rad;
+	a.scale = scale;
+	a.w = w;
+	a.h = h;
+	a.dx = dx;
+	a.dy = dy;
+	a.aspect = aspect;
+	return a;
+}
 
+image random_augment_image( image im
+						, float angle
+						, float aspect
+						, int low
+						, int high
+						, int w
+						, int h )
+{
+	augment_args a = random_augment_args( im
+								, angle
+								, aspect
+								, low
+								, high
+								, w
+								, h );
+	image crop = rotate_crop_image( im
+								, a.rad
+								, a.scale
+								, a.w
+								, a.h
+								, a.dx
+								, a.dy
+								, a.aspect );
 	return crop;
 }
 
@@ -1307,6 +1465,56 @@ float three_way_max( float a, float b, float c )
 float three_way_min( float a, float b, float c )
 {
 	return (a < b) ? ((a < c) ? a : c) : ((b < c) ? b : c);
+}
+
+void yuv_to_rgb( image im )
+{
+	assert( im.c == 3 );
+	int i, j;
+	float r, g, b;
+	float y, u, v;
+	for ( j = 0; j < im.h; ++j )
+	{
+		for ( i = 0; i < im.w; ++i )
+		{
+			y = get_pixel( im, i, j, 0 );
+			u = get_pixel( im, i, j, 1 );
+			v = get_pixel( im, i, j, 2 );
+
+			r = y +  1.13983f*v;
+			g = y + -0.39465f*u + -0.58060f*v;
+			b = y +  2.03211f*u;
+
+			set_pixel( im, i, j, 0, r );
+			set_pixel( im, i, j, 1, g );
+			set_pixel( im, i, j, 2, b );
+		}
+	}
+}
+
+void rgb_to_yuv( image im )
+{
+	assert( im.c == 3 );
+	int i, j;
+	float r, g, b;
+	float y, u, v;
+	for ( j = 0; j < im.h; ++j )
+	{
+		for ( i = 0; i < im.w; ++i )
+		{
+			r = get_pixel( im, i, j, 0 );
+			g = get_pixel( im, i, j, 1 );
+			b = get_pixel( im, i, j, 2 );
+
+			y =  0.299f*r   +  0.587f*g   +  0.114f*b;
+			u = -0.14713f*r + -0.28886f*g +  0.436f*b;
+			v =  0.615f*r   + -0.51499f*g + -0.10001f*b;
+
+			set_pixel( im, i, j, 0, y );
+			set_pixel( im, i, j, 1, u );
+			set_pixel( im, i, j, 2, v );
+		}
+	}
 }
 
 // http://www.cs.rit.edu/~ncs/color/t_convert.html
@@ -1335,19 +1543,13 @@ void rgb_to_hsv( image im )
 			else
 			{
 				s = delta/max;
-				if ( r == max )
-				{
-					h = (g - b) / delta;
-				}
-				else if ( g == max )
-				{
-					h = 2 + (b - r) / delta;
-				}
-				else
-				{
-					h = 4 + (r - g) / delta;
-				}
+
+				if		( r == max )	{	h = (g - b) / delta;		}
+				else if ( g == max )	{	h = 2 + (b - r) / delta;	}
+				else					{	h = 4 + (r - g) / delta;	}
+
 				if ( h < 0 ) h += 6;
+
 				h = h/6.;
 			}
 			set_pixel( im, i, j, 0, h );
@@ -1364,6 +1566,7 @@ void hsv_to_rgb( image im )
 	float r, g, b;
 	float h, s, v;
 	float f, p, q, t;
+
 	for ( j = 0; j < im.h; ++j )
 	{
 		for ( i = 0; i < im.w; ++i )
@@ -1371,6 +1574,7 @@ void hsv_to_rgb( image im )
 			h = 6 * get_pixel( im, i, j, 0 );
 			s = get_pixel( im, i, j, 1 );
 			v = get_pixel( im, i, j, 2 );
+
 			if ( s == 0 )
 			{
 				r = g = b = v;
@@ -1382,34 +1586,39 @@ void hsv_to_rgb( image im )
 				p = v*(1-s);
 				q = v*(1-s*f);
 				t = v*(1-s*(1-f));
-				if ( index == 0 )
-				{
-					r = v; g = t; b = p;
-				}
-				else if ( index == 1 )
-				{
-					r = q; g = v; b = p;
-				}
-				else if ( index == 2 )
-				{
-					r = p; g = v; b = t;
-				}
-				else if ( index == 3 )
-				{
-					r = p; g = q; b = v;
-				}
-				else if ( index == 4 )
-				{
-					r = t; g = p; b = v;
-				}
-				else
-				{
-					r = v; g = p; b = q;
-				}
+
+				if		( index == 0 )	{	r = v; g = t; b = p;	}
+				else if ( index == 1 )	{	r = q; g = v; b = p;	}
+				else if ( index == 2 )	{	r = p; g = v; b = t;	}
+				else if ( index == 3 )	{	r = p; g = q; b = v;	}
+				else if ( index == 4 )	{	r = t; g = p; b = v;	}
+				else					{	r = v; g = p; b = q;	}
 			}
+
 			set_pixel( im, i, j, 0, r );
 			set_pixel( im, i, j, 1, g );
 			set_pixel( im, i, j, 2, b );
+		}
+	}
+}
+
+void grayscale_image_3c( image im )
+{
+	assert( im.c == 3 );
+	int i, j, k;
+	float scale[] = { 0.299, 0.587, 0.114 };
+	for ( j = 0; j < im.h; ++j )
+	{
+		for ( i = 0; i < im.w; ++i )
+		{
+			float val = 0;
+			for ( k = 0; k < 3; ++k )
+			{
+				val += scale[k]*get_pixel( im, i, j, k );
+			}
+			im.data[0*im.h*im.w + im.w*j + i] = val;
+			im.data[1*im.h*im.w + im.w*j + i] = val;
+			im.data[2*im.h*im.w + im.w*j + i] = val;
 		}
 	}
 }
@@ -1419,7 +1628,7 @@ image grayscale_image( image im )
 	assert( im.c == 3 );
 	int i, j, k;
 	image gray = make_image( im.w, im.h, 1 );
-	float scale[] = { 0.587, 0.299, 0.114 };
+	float scale[] = { 0.299, 0.587, 0.114 };
 	for ( k = 0; k < im.c; ++k )
 	{
 		for ( j = 0; j < im.h; ++j )
@@ -1456,7 +1665,7 @@ image blend_image( image fore, image back, float alpha )
 			for ( i = 0; i < fore.w; ++i )
 			{
 				float val = alpha * get_pixel( fore, i, j, k ) +
-					(1 - alpha)* get_pixel( back, i, j, k );
+							(1 - alpha) * get_pixel( back, i, j, k );
 				set_pixel( blend, i, j, k, val );
 			}
 		}
@@ -1552,7 +1761,7 @@ void distort_image( image im, float hue, float sat, float val )
 
 void random_distort_image( image im, float hue, float saturation, float exposure )
 {
-	float dhue = rand_uniform_strong( -hue, hue );
+	float dhue = rand_uniform( -hue, hue );
 	float dsat = rand_scale( saturation );
 	float dexp = rand_scale( exposure );
 	distort_image( im, dhue, dsat, dexp );
@@ -1566,29 +1775,15 @@ void saturate_exposure_image( image im, float sat, float exposure )
 	hsv_to_rgb( im );
 	constrain_image( im );
 }
-
-float bilinear_interpolate( image im, float x, float y, int c )
-{
-	int ix = (int)floorf( x );
-	int iy = (int)floorf( y );
-
-	float dx = x - ix;
-	float dy = y - iy;
-
-	float val = (1-dy) * (1-dx) * get_pixel_extend( im, ix, iy, c ) +
-		dy     * (1-dx) * get_pixel_extend( im, ix, iy+1, c ) +
-		(1-dy) *   dx   * get_pixel_extend( im, ix+1, iy, c ) +
-		dy     *   dx   * get_pixel_extend( im, ix+1, iy+1, c );
-	return val;
-}
-
+// ÀÌ¹ÌÁö Å©±â¸¦ ÁöÁ¤ÇÑ Å©±â·Î Á¶Á¤ÇÑ´Ù
 image resize_image( image im, int w, int h )
 {
-	image resized = make_image( w, h, im.c );
-	image part = make_image( w, im.h, im.c );
+	image resized	= make_image( w, h, im.c );		// ÃÖÁ¾ Á¶Á¤ÀÌ¹ÌÁö
+	image part		= make_image( w, im.h, im.c );	// ºÎºĞ Á¶Á¤ÀÌ¹ÌÁö
 	int r, c, k;
 	float w_scale = (float)(im.w - 1) / (w - 1);
 	float h_scale = (float)(im.h - 1) / (h - 1);
+	// ³ôÀÌ¸¦ Á¶Á¤ÇÑ´Ù
 	for ( k = 0; k < im.c; ++k )
 	{
 		for ( r = 0; r < im.h; ++r )
@@ -1611,6 +1806,7 @@ image resize_image( image im, int w, int h )
 			}
 		}
 	}
+	// ³Êºñ¸¦ Á¶Á¤ÇÑ´Ù
 	for ( k = 0; k < im.c; ++k )
 	{
 		for ( r = 0; r < h; ++r )
@@ -1648,10 +1844,10 @@ void test_resize( char *filename )
 	image c2 = copy_image( im );
 	image c3 = copy_image( im );
 	image c4 = copy_image( im );
-	distort_image( c1, .1, 1.5, 1.5 );
-	distort_image( c2, -.1, .66666, .66666 );
-	distort_image( c3, .1, 1.5, .66666 );
-	distort_image( c4, .1, .66666, 1.5 );
+	distort_image( c1, 0.1f, 1.5f, 1.5f );
+	distort_image( c2, -0.1f, 0.66666f, 0.66666f );
+	distort_image( c3, 0.1f, 1.5f, 0.66666f );
+	distort_image( c4, 0.1f, 0.66666f, 1.5f );
 
 
 	show_image( im, "Original" );
@@ -1660,17 +1856,17 @@ void test_resize( char *filename )
 	show_image( c2, "C2" );
 	show_image( c3, "C3" );
 	show_image( c4, "C4" );
+
 	#ifdef OPENCV
 	while ( 1 )
 	{
-		image aug = random_augment_image( im, 0, .75, 320, 448, 320 );
+		image aug = random_augment_image( im, 0.0f, 0.75f, 320, 448, 320, 320 );
 		show_image( aug, "aug" );
 		free_image( aug );
 
-
-		float exposure = 1.15;
-		float saturation = 1.15;
-		float hue = .05;
+		float exposure		= 1.15f;
+		float saturation	= 1.15f;
+		float hue			= 0.05f;
 
 		image c = copy_image( im );
 
@@ -1687,127 +1883,233 @@ void test_resize( char *filename )
 	#endif
 }
 
-
+// stbi ¸¦ »ç¿ëÇÏ¿© ÆÄÀÏ¿¡¼­ image ±¸Á¶·Î ÀÚ·á ÅÓÀç
 image load_image_stb( char *filename, int channels )
 {
-	int w, h, c;
-	unsigned char *data = stbi_load( filename, &w, &h, &c, channels );
+	int ww, hh, cc;
+	unsigned char *WonBon = stbi_load( filename, &ww, &hh, &cc, channels );
 
-	if ( !data )
+	if ( !WonBon )
 	{
-		fprintf( stderr, "Cannot load image \"%s\"\nSTB Reason: %s\n"
+		fprintf( stderr
+		//	, "Cannot load image \"%s\"\nSTB Reason: %s\n"	//  [7/6/2018 jobs]
+			, "\"%s\" ÀÌ¹ÌÁö Å¾Àç½ÇÆĞ!\nSTB ÀÌÀ¯: %s\n"
 			, filename, stbi_failure_reason() );
 		exit( 0 );
 	}
 
-	if ( channels )
-		c = channels;
+	if ( channels ) cc = channels;
 
-	int i, j, k;
-	image im = make_image( w, h, c );
-
-	for ( k=0; k<c; ++k )
+	int xx, yy, kk;
+	image im = make_image( ww, hh, cc );
+	// »ö ¹İº¹
+	for ( kk=0; kk < cc; ++kk )
 	{
-		for ( j=0; j<h; ++j )
+		// ¼¼·Î ¹İº¹
+		for ( yy=0; yy < hh; ++yy )
 		{
-			for ( i=0; i<w; ++i )
+			// °¡·Î ¹İº¹
+			for ( xx=0; xx < ww; ++xx )
 			{
-				int dst_index = i + w*j + w*h*k;
-				int src_index = k + c*i + c*w*j;
-				im.data[dst_index] = (float)data[src_index]/255.;
+				//				ÇàÀ§Ä¡	 + È­¼Ò   + »ö
+				int src_index = ww*yy*cc + cc*xx + kk;	// ¿øº»È­¼Ò ÁöÀû
+				//				»öÀ§Ä¡	 + ÇàÀ§Ä¡ + È­¼Ò
+				int dst_index = ww*hh*kk + ww*yy + xx;	// »çº»È­¼Ò ÁöÀû
+				im.data[dst_index] = (float)WonBon[src_index]/255.;
 			}
 		}
 	}
 
-	free( data );
+	free( WonBon );
 	return im;
 }
-
-image load_image( char *filename, int w, int h, int c )
+// ÇÏ³ªÀÇ ±×¸²ÆÄÀÏ ÀÚ·á¿¡¼­ image ±¸Á¶ÀÚ·á¸¦ ÁöÁ¤ÇÑ Ã¤³Î·Î Å¾ÀçÇÑ´Ù
+image load_image( char *filename, int ww, int hh, int cc )
 {
 	#ifdef OPENCV
-
-	#ifndef CV_VERSION_EPOCH
-	image out = load_image_stb( filename, c );	// OpenCV 3.x
-	//image out = load_image_cv( filename, c );
+	image out = load_image_cv( filename, cc );
 	#else
-	image out = load_image_cv( filename, c );		// OpenCV 2.4.x
+	image out = load_image_stb( filename, cc );
 	#endif
-
-	#else
-	image out = load_image_stb( filename, c );	// without OpenCV
-	#endif
-
-	if ( (h && w) && (h != out.h || w != out.w) )
+	// ÀÌ¹ÌÁöÀÇ ³Êºñ, ³ôÀÌ°¡ °°°í ÀĞ¾î ¿ÂÀÌ¹ÌÁöÀÇ ³Êºñ¿Í ³ôÀÌ°¡ °°Áö ¾ÊÀ¸¸é ÀÌ¹ÌÁöÅ©±â Á¶Á¤
+	if ( (hh && ww) && (hh != out.h || ww != out.w) )
 	{
-		image resized = resize_image( out, w, h );
+		image resized = resize_image( out, ww, hh );
 		free_image( out );
 		out = resized;
 	}
-
 	return out;
 }
-// í•˜ë‚˜ì˜ íŒŒì¼ì´ë¦„ìœ¼ë¡œ í•˜ë‚˜ì˜ ì…ë ¥ê°’ íƒ‘ì¬(ê°€ë¡œ, ì„¸ë¡œ í¬ê¸°ë¡œ ì¡°ì •)
-image load_image_color( char *filename, int w, int h )
+// ÇÏ³ªÀÇ ±×¸²ÆÄÀÏ ÀÚ·á¿¡¼­ image ±¸Á¶ÀÚ·á¸¦ 3Ã¤³Î·Î Å¾ÀçÇÑ´Ù
+image load_image_color( char *filename, int ww, int hh )
 {
-	return load_image( filename, w, h, 3 );
+	return load_image( filename, ww, hh, 3 );
 }
 
 image get_image_layer( image m, int l )
 {
 	image out = make_image( m.w, m.h, 1 );
-	int i;
-	for ( i = 0; i < m.h*m.w; ++i )
+
+	int ii;
+	for ( ii=0; ii < m.h*m.w; ++ii )
 	{
-		out.data[i] = m.data[i+l*m.h*m.w];
+		out.data[ii] = m.data[ ii + l*m.h*m.w ];
 	}
 	return out;
 }
 
-float get_pixel( image m, int x, int y, int c )
-{
-	assert( x < m.w && y < m.h && c < m.c );
-	return m.data[c*m.h*m.w + y*m.w + x];
-}
-float get_pixel_extend( image m, int x, int y, int c )
-{
-	if ( x < 0 ) x = 0;
-	if ( x >= m.w ) x = m.w-1;
-	if ( y < 0 ) y = 0;
-	if ( y >= m.h ) y = m.h-1;
-	if ( c < 0 || c >= m.c ) return 0;
-	return get_pixel( m, x, y, c );
-}
-void set_pixel( image m, int x, int y, int c, float val )
-{
-	if ( x < 0 || y < 0 || c < 0 || x >= m.w || y >= m.h || c >= m.c ) return;
-	assert( x < m.w && y < m.h && c < m.c );
-	m.data[c*m.h*m.w + y*m.w + x] = val;
-}
-void add_pixel( image m, int x, int y, int c, float val )
-{
-	assert( x < m.w && y < m.h && c < m.c );
-	m.data[c*m.h*m.w + y*m.w + x] += val;
-}
-
 void print_image( image m )
 {
-	int i, j, k;
-	for ( i =0; i < m.c; ++i )
+	int ii, jj, kk;
+	for ( ii=0; ii < m.c; ++ii )
 	{
-		for ( j =0; j < m.h; ++j )
+		for ( jj=0; jj < m.h; ++jj )
 		{
-			for ( k = 0; k < m.w; ++k )
+			for ( kk=0; kk < m.w; ++kk )
 			{
-				printf( "%.2lf, ", m.data[i*m.h*m.w + j*m.w + k] );
-				if ( k > 30 ) break;
+				printf( "%.2lf, ", m.data[ ii*m.h*m.w + jj*m.w + kk ] );
+				if ( kk > 30 ) break;
 			}
 			printf( "\n" );
-			if ( j > 30 ) break;
+			if ( jj > 30 ) break;
 		}
 		printf( "\n" );
 	}
 	printf( "\n" );
+}
+//ÀÌ¹ÌÁö¸¦ Á¤»ç°¢ÇüÀ¸·Î ¸ğÀº´Ù
+image collapse_images_square( image *ims, int nn )
+{
+	int iSaek	= 1;
+	int iTeDuRi	= 1;
+
+	int nPanSu	= ims[0].c;
+
+	// ÇÑº¯¿¡ µé¾î°¥ Æ÷ÁıÆÇ °³¼ö¸¦ °è»êÇÑ´Ù
+	int nSu = (int)ceil( sqrt( nn * nPanSu ) );	// ÇÑº¯ÀÇ °³¼ö¸¦ ±¸ÇÑ´Ù(¼Ò¼öÁ¡ ¿Ã¸²)
+
+	// Å×µÎ¸®¸¦ Æ÷ÇÔÇÑ ÇÑº¯ÀÇ ±æÀÌ¸¦ °è»ê
+	int iNeoBi	= nSu * ( ims[0].w + iTeDuRi );
+	int iNoPi	= iNeoBi;
+
+	image filters = make_image( iNeoBi, iNoPi, iSaek );	// º¹»çÇÒ ¸Ş¸ğ¸®¸¦ ÇÒ´çÇÑ´Ù
+
+	int iBo_GaRo = ims[0].w + iTeDuRi;
+	int iBo_SeRo = ims[0].w + iTeDuRi;
+
+	int ii, jj;
+	// ÆÇ¼ö¸¦ ¹İº¹ÇÑ´Ù
+	for ( ii=0; ii < nn; ++ii )
+	{
+		image copy = copy_image( ims[ii] );	// Æ÷Áı°¡Áß°ªÀ» ÇÑÆÇ¾¿ º¹»ç()
+
+		//normalize_image(copy);
+		if ( nPanSu == 3 && iSaek )
+		{
+			//embed_image( copy, filters, 0, h_offset );
+		}
+		else
+		{
+			SoBaGi_image( copy, filters, iBo_GaRo, iBo_SeRo, ii );
+		}
+
+		free_image( copy );
+	}
+
+	return filters;
+}
+// ÀÌ¹ÌÁö¸¦ ¼öÁ÷À¸·Î ¸ğÀº´Ù
+image collapse_images_vert( image *ims, int nn )
+{
+	int color	= 1;
+	int border	= 1;
+	int hh, ww, cc;
+	ww = ims[0].w;
+	hh = (ims[0].h + border) * nn - border;
+	cc = ims[0].c;
+
+	if ( cc != 3 || !color )
+	{
+		ww = ( ww + border ) * cc - border;
+		cc = 1;
+	}
+
+	image filters = make_image( ww, hh, cc );
+
+	int ii, jj;
+	// ÆÇ¼ö¸¦ ¹İº¹ÇÑ´Ù
+	for ( ii=0; ii < nn; ++ii )
+	{
+		int h_offset = ii * ( ims[0].h + border );
+		image copy = copy_image( ims[ii] );	// Æ÷Áı°¡Áß°ªÀ» ÇÑÆÇ¾¿ º¹»ç
+
+		//normalize_image(copy);
+		if ( cc == 3 && color )
+		{
+			embed_image( copy, filters, 0, h_offset );
+		}
+		else
+		{
+			for ( jj=0; jj < copy.c; ++jj )
+			{
+				int w_offset = jj * ( ims[0].w + border );
+				image layer = get_image_layer( copy, jj );
+				embed_image( layer, filters, w_offset, h_offset );
+				free_image( layer );
+			}
+		}
+
+		free_image( copy );
+	}
+
+	return filters;
+}
+
+image collapse_images_horz( image *ims, int nn )
+{
+	int color	= 1;
+	int border	= 1;
+	int hh, ww, cc;
+	int size = ims[0].h;
+	hh = size;
+	ww = (ims[0].w + border) * nn - border;
+	cc = ims[0].c;
+
+	if ( cc != 3 || !color )
+	{
+		hh = ( hh + border ) * cc - border;
+		cc = 1;
+	}
+
+	image filters = make_image( ww, hh, cc );
+
+	int ii, jj;
+	// ÆÇ¼ö¸¦ ¹İº¹ÇÑ´Ù
+	for ( ii=0; ii < nn; ++ii )
+	{
+		int w_offset = ii * ( size + border );
+		image copy = copy_image( ims[ii] );	// Æ÷Áı°¡Áß°ªÀ» ÇÑÆÇ¾¿ º¹»ç
+
+		//normalize_image(copy);
+		if ( cc == 3 && color )
+		{
+			embed_image( copy, filters, w_offset, 0 );
+		}
+		else
+		{
+			for ( jj=0; jj < copy.c; ++jj )
+			{
+				int h_offset = jj * ( size + border );
+				image layer = get_image_layer( copy, jj );
+				embed_image( layer, filters, w_offset, h_offset );
+				free_image( layer );
+			}
+		}
+
+		free_image( copy );
+	}
+
+	return filters;
 }
 
 void show_image_normalized( image im, const char *name )
@@ -1817,22 +2119,24 @@ void show_image_normalized( image im, const char *name )
 	show_image( c, name );
 	free_image( c );
 }
-
+// ÀÌ¹ÌÁö¸¦ Á¤»ç°¢ÇüÀ¸·Î ¹è¿­À» Á¶Á¤ÇÏ°í È­¸é¿¡ º¸¿©ÁØ´Ù
 void show_images( image *ims, int n, char *window )
 {
 	//image m = collapse_images_vert( ims, n );
-	image m = MaGoBaGi_Pan( ims, n );	// ì´ë¯¸ì§€ë¥¼ ë§ˆê³  ë³µì‚¬í•œë‹¤
+	image m = collapse_images_square( ims, n );
 /*
 	int w = 448;
 	int h = ((float)m.h/m.w) * 448;
+
 	if ( h > 896 )
 	{
 		h = 896;
 		w = ((float)m.w/m.h) * 896;
 	}
-	image sized = resize_image( m, w, h );
+
+	image sized = resize_image(m, w, h);
 */
-	normalize_image( m );
+	//normalize_image( m );		// Áßº¹À¸·Î °í¸£±â Ã³¸®¸¦ ÇÑ´Ù [7/5/2018 jobs]
 	save_image( m, window );
 	show_image( m, window );
 	free_image( m );

@@ -1,124 +1,148 @@
 #include "data.h"
-#include "./utils.h"
+#include "utils.h"
 #include "image.h"
 #include "cuda.h"
+
+//#include "pthread.h"	//  [6/28/2018 jobs] timespec 재정의 문제
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-// 파일에서 목록을 추출하여 추출한 모든 목록을 반환한다
+
+void MNIST_ImageSwap( MNIST_ImageHeader *Hdr )
+{
+	Hdr->magic	= bswap( Hdr->magic );
+	Hdr->GaeSu	= bswap( Hdr->GaeSu );
+	Hdr->SeRo	= bswap( Hdr->SeRo );
+	Hdr->GaRo	= bswap( Hdr->GaRo );
+}
+
+void MNIST_LabelSwap( MNIST_LabelHeader *Hdr )
+{
+	Hdr->magic	= bswap( Hdr->magic );
+	Hdr->GaeSu	= bswap( Hdr->GaeSu );
+}
+
+// 파일에서 목록을 추출한다
 list *get_paths( char *filename )
 {
 	char *path;
 	//FILE *file = fopen( filename, "r" );
 	FILE *file; fopen_s( &file, filename, "r" );
 
-	if ( !file )
-		file_error( filename );
+	if ( !file ) file_error( filename );
 
 	list *lines = make_list();
 
-	// 한줄단위로 읽어서 목록에 추가한다
 	while ( (path=fgetl( file )) )
 	{
 		list_insert( lines, path );
 	}
-
 	fclose( file );
+
 	return lines;
 }
 
-/*
-char **get_random_paths_indexes(char **paths, int n, int m, int *indexes)
+
+char **get_random_paths_indexes( char **paths, int nn, int mm, int *indexes )
 {
-	char **random_paths = calloc(n, sizeof(char*));
-	int i;
-	pthread_mutex_lock(&mutex);
-	for(i = 0; i < n; ++i){
-		int index = random_gen()%m;
-		indexes[i] = index;
-		random_paths[i] = paths[index];
-		if(i == 0) printf("%s\n", paths[index]);
+	char **random_paths = calloc( nn, sizeof( char* ) );
+	int ii;
+
+	pthread_mutex_lock( &mutex );
+
+	for ( ii=0; ii < nn; ++ii )
+	{
+		int index		= rand() % mm;
+		indexes[ii]		= index;
+		random_paths[ii] = paths[index];
+
+		if ( ii == 0 ) printf( "%s\n", paths[index] );
 	}
-	pthread_mutex_unlock(&mutex);
+
+	pthread_mutex_unlock( &mutex );
+
 	return random_paths;
 }
-*/
 
-char **get_random_paths( char **paths, int n, int m )
+// 
+char **get_random_paths( char **paths, int nn, int mm )
 {
-	char **random_paths = calloc( n, sizeof( char* ) );
-	int i;
+	char **random_paths = calloc( nn, sizeof( char* ) );
+
 	pthread_mutex_lock( &mutex );
-	//printf("n = %d \n", n);
-	for ( i = 0; i < n; ++i )
+
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
-		int index = random_gen() % m;
-		random_paths[i] = paths[index];
+		int index = rand() % mm;
+		random_paths[ii] = paths[index];
 		//if(i == 0) printf("%s\n", paths[index]);
-		//printf("grp: %s\n", paths[index]);
 	}
 	pthread_mutex_unlock( &mutex );
+
 	return random_paths;
 }
 
-char **find_replace_paths( char **paths, int n, char *find, char *replace )
+char **find_replace_paths( char **paths, int nn, char *find, char *replace )
 {
-	char **replace_paths = calloc( n, sizeof( char* ) );
-	int i;
-	for ( i = 0; i < n; ++i )
+	char **replace_paths = calloc( nn, sizeof( char* ) );
+
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
 		char replaced[4096];
-		find_replace( paths[i], find, replace, replaced );
-		replace_paths[i] = copy_string( replaced );
+		find_replace( paths[ii], find, replace, replaced );
+		replace_paths[ii] = copy_string( replaced );
 	}
+
 	return replace_paths;
 }
 
-matrix load_image_paths_gray( char **paths, int n, int w, int h )
+matrix load_image_paths_gray( char **paths, int nn, int ww, int hh )
 {
-	int i;
-	matrix X;
-	X.rows = n;
-	X.vals = calloc( X.rows, sizeof( float* ) );
-	X.cols = 0;
+	int ii;
+	matrix XX;
+	XX.rows = nn;
+	XX.vals = calloc( XX.rows, sizeof( float* ) );
+	XX.cols = 0;
 
-	for ( i = 0; i < n; ++i )
+	for ( ii=0; ii < nn; ++ii )
 	{
-		image im = load_image( paths[i], w, h, 3 );
+		image im	= load_image( paths[ii], ww, hh, 3 );
 
-		image gray = grayscale_image( im );
+		image gray	= grayscale_image( im );
 		free_image( im );
 		im = gray;
 
-		X.vals[i] = im.data;
-		X.cols = im.h*im.w*im.c;
+		XX.vals[ii]	= im.data;
+		XX.cols		= im.h*im.w*im.c;
 	}
-	return X;
+	return XX;
 }
-// 파일이름으로 사리개수 크기의 입력값을 탑재한다
-matrix load_image_paths( char **paths, int n, int w, int h )
+// 파일이름으로 자료 적재
+matrix load_image_paths( char **paths, int nn, int ww, int hh )
 {
-	int i;
-	matrix X;
-	X.rows = n;
-	X.vals = calloc( X.rows, sizeof( float* ) );
-	X.cols = 0;
+	matrix XX;
+	XX.rows = nn;
+	XX.vals = calloc( XX.rows, sizeof( float* ) );
+	XX.cols = 0;
 
-	for ( i=0; i<n; ++i )
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
-		image im = load_image_color( paths[i], w, h );
-		X.vals[i] = im.data;
-		X.cols = im.h*im.w*im.c;
+		image im	= load_image_color( paths[ii], ww, hh );
+		XX.vals[ii]	= im.data;
+		XX.cols		= im.h*im.w*im.c;
 	}
 
-	return X;
+	return XX;
 }
-
-matrix load_image_augment_paths( char **paths
-							, int n
+// 자료개수에 해당하는 사비자료를 탑재한다
+matrix load_image_augment_paths( char **paths	// 자료목록
+							, int nn			// 자료개수
 							, int min
 							, int max
 							, int size
@@ -126,19 +150,30 @@ matrix load_image_augment_paths( char **paths
 							, float aspect
 							, float hue
 							, float saturation
-							, float exposure )
+							, float exposure
+							, int center )
 {
-	int i;
+	int ii;
 	matrix X;
-	X.rows = n;
+	X.rows = nn;
 	X.vals = calloc( X.rows, sizeof( float* ) );
 	X.cols = 0;
 
-	for ( i=0; i<n; ++i )
+	for ( ii=0; ii < nn; ++ii )
 	{
-		image im = load_image_color( paths[i], 0, 0 );
-		image crop = random_augment_image( im, angle, aspect, min, max, size );
-		int flip = random_gen() % 2;
+		image im = load_image_color( paths[ii], 0, 0 );
+		image crop;
+
+		if ( center )
+		{
+			crop = center_crop_image( im, size, size );
+		}
+		else
+		{
+			crop = random_augment_image( im, angle, aspect, min, max, size, size );
+		}
+
+		int flip = rand()%2;
 		if ( flip ) flip_image( crop );
 		random_distort_image( crop, hue, saturation, exposure );
 
@@ -148,56 +183,69 @@ matrix load_image_augment_paths( char **paths
 		cvWaitKey(0);
 		*/
 		free_image( im );
-		X.vals[i] = crop.data;
-		X.cols = crop.h*crop.w*crop.c;
+		X.vals[ii]	= crop.data;
+		X.cols		= crop.h*crop.w*crop.c;
 	}
-
 	return X;
 }
 
 
-box_label *read_boxes( char *filename, int *n )
+box_label *read_boxes( char *filename, int *nn )
 {
-	box_label *boxes = calloc( 1, sizeof( box_label ) );
 	//FILE *file = fopen( filename, "r" );
 	FILE *file; fopen_s( &file, filename, "r" );
+
 	if ( !file ) file_error( filename );
-	float x, y, h, w;
+	float xx, yy, hh, ww;
 	int id;
 	int count = 0;
-	//while ( fscanf( file, "%d %f %f %f %f", &id, &x, &y, &w, &h ) == 5 )
-	while ( fscanf_s( file, "%d %f %f %f %f", &id, &x, &y, &w, &h ) == 5 )
+	int size = 64;
+	box_label *boxes = calloc( size, sizeof( box_label ) );
+
+	//while ( fscanf( file, "%d %f %f %f %f", &id, &xx, &yy, &ww, &hh ) == 5 )
+	while ( fscanf_s( file, "%d %f %f %f %f", &id, &xx, &yy, &ww, &hh ) == 5 )
 	{
-		boxes = realloc( boxes, (count+1)*sizeof( box_label ) );
+		if ( count == size )
+		{
+			size = size * 2;
+			boxes = realloc( boxes, size*sizeof( box_label ) );
+		}
 		boxes[count].id = id;
-		boxes[count].x = x;
-		boxes[count].y = y;
-		boxes[count].h = h;
-		boxes[count].w = w;
-		boxes[count].left   = x - w/2;
-		boxes[count].right  = x + w/2;
-		boxes[count].top    = y - h/2;
-		boxes[count].bottom = y + h/2;
+		boxes[count].x = xx;
+		boxes[count].y = yy;
+		boxes[count].h = hh;
+		boxes[count].w = ww;
+		boxes[count].left   = xx - ww/2;
+		boxes[count].right  = xx + ww/2;
+		boxes[count].top    = yy - hh/2;
+		boxes[count].bottom = yy + hh/2;
 		++count;
 	}
+
 	fclose( file );
-	*n = count;
+	*nn = count;
 	return boxes;
 }
 
-void randomize_boxes( box_label *b, int n )
+void randomize_boxes( box_label *b, int nn )
 {
-	int i;
-	for ( i = 0; i < n; ++i )
+	int ii;
+	for ( ii=0; ii < nn; ++ii )
 	{
-		box_label swap = b[i];
-		int index = random_gen()%n;
-		b[i] = b[index];
-		b[index] = swap;
+		box_label swap	= b[ii];
+		int index	= rand() % nn;
+		b[ii]		= b[index];
+		b[index]	= swap;
 	}
 }
 
-void correct_boxes( box_label *boxes, int n, float dx, float dy, float sx, float sy, int flip )
+void correct_boxes( box_label *boxes
+				, int n
+				, float dx
+				, float dy
+				, float sx
+				, float sy
+				, int flip )
 {
 	int i;
 	for ( i = 0; i < n; ++i )
@@ -218,14 +266,14 @@ void correct_boxes( box_label *boxes, int n, float dx, float dy, float sx, float
 		if ( flip )
 		{
 			float swap = boxes[i].left;
-			boxes[i].left = 1. - boxes[i].right;
-			boxes[i].right = 1. - swap;
+			boxes[i].left = 1.0f - boxes[i].right;
+			boxes[i].right = 1.0f - swap;
 		}
 
-		boxes[i].left =  constrain( 0, 1, boxes[i].left );
-		boxes[i].right = constrain( 0, 1, boxes[i].right );
-		boxes[i].top =   constrain( 0, 1, boxes[i].top );
-		boxes[i].bottom =   constrain( 0, 1, boxes[i].bottom );
+		boxes[i].left	= constrain( 0, 1, boxes[i].left );
+		boxes[i].right	= constrain( 0, 1, boxes[i].right );
+		boxes[i].top	= constrain( 0, 1, boxes[i].top );
+		boxes[i].bottom	= constrain( 0, 1, boxes[i].bottom );
 
 		boxes[i].x = (boxes[i].left+boxes[i].right)/2;
 		boxes[i].y = (boxes[i].top+boxes[i].bottom)/2;
@@ -237,7 +285,14 @@ void correct_boxes( box_label *boxes, int n, float dx, float dy, float sx, float
 	}
 }
 
-void fill_truth_swag( char *path, float *truth, int classes, int flip, float dx, float dy, float sx, float sy )
+void fill_truth_swag( char *path
+					, float *truth
+					, int classes
+					, int flip
+					, float dx
+					, float dy
+					, float sx
+					, float sy )
 {
 	char labelpath[4096];
 	find_replace( path, "images", "labels", labelpath );
@@ -254,7 +309,7 @@ void fill_truth_swag( char *path, float *truth, int classes, int flip, float dx,
 	int id;
 	int i;
 
-	for ( i = 0; i < count && i < 30; ++i )
+	for ( i = 0; i < count && i < 90; ++i )
 	{
 		x =  boxes[i].x;
 		y =  boxes[i].y;
@@ -276,7 +331,15 @@ void fill_truth_swag( char *path, float *truth, int classes, int flip, float dx,
 	free( boxes );
 }
 
-void fill_truth_region( char *path, float *truth, int classes, int num_boxes, int flip, float dx, float dy, float sx, float sy )
+void fill_truth_region( char *path
+					, float *truth
+					, int classes
+					, int num_boxes
+					, int flip
+					, float dx
+					, float dy
+					, float sx
+					, float sy )
 {
 	char labelpath[4096];
 	find_replace( path, "images", "labels", labelpath );
@@ -302,7 +365,7 @@ void fill_truth_region( char *path, float *truth, int classes, int num_boxes, in
 		h =  boxes[i].h;
 		id = boxes[i].id;
 
-		if ( w < .01 || h < .01 ) continue;
+		if ( w < .005 || h < .005 ) continue;
 
 		int col = (int)(x*num_boxes);
 		int row = (int)(y*num_boxes);
@@ -325,7 +388,161 @@ void fill_truth_region( char *path, float *truth, int classes, int num_boxes, in
 	free( boxes );
 }
 
-void fill_truth_detection( char *path, int num_boxes, float *truth, int classes, int flip, float dx, float dy, float sx, float sy )
+void load_rle( image im, int *rle, int n )
+{
+	int count = 0;
+	int curr = 0;
+	int i, j;
+	for ( i = 0; i < n; ++i )
+	{
+		for ( j = 0; j < rle[i]; ++j )
+		{
+			im.data[count++] = (float)curr;
+		}
+		curr = 1 - curr;
+	}
+	for ( ; count < im.h*im.w*im.c; ++count )
+	{
+		im.data[count] = (float)curr;
+	}
+}
+
+void or_image( image src, image dest, int c )
+{
+	int i;
+	for ( i = 0; i < src.w*src.h; ++i )
+	{
+		if ( src.data[i] ) dest.data[dest.w*dest.h*c + i] = 1;
+	}
+}
+
+void exclusive_image( image src )
+{
+	int k, j, i;
+	int s = src.w*src.h;
+	for ( k = 0; k < src.c-1; ++k )
+	{
+		for ( i = 0; i < s; ++i )
+		{
+			if ( src.data[k*s + i] )
+			{
+				for ( j = k+1; j < src.c; ++j )
+				{
+					src.data[j*s + i] = 0;
+				}
+			}
+		}
+	}
+}
+
+box bound_image( image im )
+{
+	int x, y;
+	int minx = im.w;
+	int miny = im.h;
+	int maxx = 0;
+	int maxy = 0;
+	for ( y = 0; y < im.h; ++y )
+	{
+		for ( x = 0; x < im.w; ++x )
+		{
+			if ( im.data[y*im.w + x] )
+			{
+				minx = (x < minx) ? x : minx;
+				miny = (y < miny) ? y : miny;
+				maxx = (x > maxx) ? x : maxx;
+				maxy = (y > maxy) ? y : maxy;
+			}
+		}
+	}
+	box b = { (float)minx, (float)miny, (float)(maxx-minx + 1), (float)(maxy-miny + 1) };
+	//printf("%f %f %f %f\n", b.x, b.y, b.w, b.h);
+	return b;
+}
+
+void fill_truth_iseg( char *path
+					, int num_boxes
+					, float *truth
+					, int classes
+					, int w
+					, int h
+					, augment_args aug
+					, int flip
+					, int mw
+					, int mh )
+{
+	char labelpath[4096];
+	find_replace( path, "images", "mask", labelpath );
+	find_replace( labelpath, "JPEGImages", "mask", labelpath );
+	find_replace( labelpath, ".jpg", ".txt", labelpath );
+	find_replace( labelpath, ".JPG", ".txt", labelpath );
+	find_replace( labelpath, ".JPEG", ".txt", labelpath );
+
+	//FILE *file = fopen( labelpath, "r" );
+	FILE *file; fopen_s( &file, labelpath, "r" );
+
+	if ( !file ) file_error( labelpath );
+	char buff[32788];
+	int id;
+	int i = 0;
+	image part = make_image( w, h, 1 );
+
+	//while ( (fscanf( file, "%d %s", &id, buff ) == 2) && i < num_boxes )
+	while ( (fscanf_s( file, "%d %s", &id, buff ) == 2) && i < num_boxes )
+	{
+		int n = 0;
+		int *rle = read_intlist( buff, &n, 0 );
+		load_rle( part, rle, n );
+		image sized = rotate_crop_image( part
+									, aug.rad
+									, aug.scale
+									, aug.w
+									, aug.h
+									, aug.dx
+									, aug.dy
+									, aug.aspect );
+
+		if ( flip ) flip_image( sized );
+
+		box b = bound_image( sized );
+
+		if ( b.w > 0 )
+		{
+			image crop = crop_image( sized, (int)b.x, (int)b.y, (int)b.w, (int)b.h );
+			image mask = resize_image( crop, mw, mh );
+			truth[i*(4 + mw*mh + 1) + 0] = (b.x + b.w/2.0f)/sized.w;
+			truth[i*(4 + mw*mh + 1) + 1] = (b.y + b.h/2.0f)/sized.h;
+			truth[i*(4 + mw*mh + 1) + 2] = b.w/sized.w;
+			truth[i*(4 + mw*mh + 1) + 3] = b.h/sized.h;
+
+			int j;
+			for ( j = 0; j < mw*mh; ++j )
+			{
+				truth[i*(4 + mw*mh + 1) + 4 + j] = mask.data[j];
+			}
+
+			truth[i*(4 + mw*mh + 1) + 4 + mw*mh] = (float)id;
+			free_image( crop );
+			free_image( mask );
+			++i;
+		}
+		free_image( sized );
+		free( rle );
+	}
+	fclose( file );
+	free_image( part );
+}
+
+
+void fill_truth_detection( char *path
+						, int num_boxes
+						, float *truth
+						, int classes
+						, int flip
+						, float dx
+						, float dy
+						, float sx
+						, float sy )
 {
 	char labelpath[4096];
 	find_replace( path, "images", "labels", labelpath );
@@ -344,6 +561,7 @@ void fill_truth_detection( char *path, int num_boxes, float *truth, int classes,
 	float x, y, w, h;
 	int id;
 	int i;
+	int sub = 0;
 
 	for ( i = 0; i < count; ++i )
 	{
@@ -353,13 +571,17 @@ void fill_truth_detection( char *path, int num_boxes, float *truth, int classes,
 		h =  boxes[i].h;
 		id = boxes[i].id;
 
-		if ( (w < .01 || h < .01) ) continue;
+		if ( (w < .001 || h < .001) )
+		{
+			++sub;
+			continue;
+		}
 
-		truth[i*5+0] = x;
-		truth[i*5+1] = y;
-		truth[i*5+2] = w;
-		truth[i*5+3] = h;
-		truth[i*5+4] = id;
+		truth[(i-sub)*5+0] = x;
+		truth[(i-sub)*5+1] = y;
+		truth[(i-sub)*5+2] = w;
+		truth[(i-sub)*5+3] = h;
+		truth[(i-sub)*5+4] = (float)id;
 	}
 	free( boxes );
 }
@@ -421,34 +643,35 @@ data load_data_captcha_encode( char **paths, int n, int m, int w, int h )
 	if ( m ) free( paths );
 	return d;
 }
-
-void fill_truth( char *path, char **labels, int k, float *truth )
+// 목표값 해당위치에 목표값을 "1.0" 으로 설정
+void fill_truth( char *path, char **labels, int kk, float *truth )
 {
-	int i;
-	memset( truth, 0, k*sizeof( float ) );
+	memset( truth, 0, kk*sizeof( float ) );
+	// 출력단의 출력개수를 반복
+	int ii;
 	int count = 0;
-
-	for ( i=0; i<k; ++i )
+	for ( ii=0; ii < kk; ++ii )
 	{
-		if ( strstr( path, labels[i] ) )
+		if ( strstr( path, labels[ii] ) )
 		{
-			truth[i] = 1;
+			truth[ii] = 1;
 			++count;
+			//printf("%s %s %d\n", path, labels[i], i);
 		}
 	}
 
-	if ( count != 1 )
+	if ( count != 1 && (kk != 1 || count != 0) )
 		printf( "Too many or too few labels: %d, %s\n", count, path );
 }
-
-void fill_hierarchy( float *truth, int k, tree *hierarchy )
+// 계층
+void fill_hierarchy( float *truth, int kk, tree *hierarchy )
 {
-	int j;
-	for ( j = 0; j < k; ++j )
+	int jj;
+	for ( jj=0; jj < kk; ++jj )
 	{
-		if ( truth[j] )
+		if ( truth[jj] )
 		{
-			int parent = hierarchy->parent[j];
+			int parent = hierarchy->parent[jj];
 			while ( parent >= 0 )
 			{
 				truth[parent] = 1;
@@ -456,97 +679,124 @@ void fill_hierarchy( float *truth, int k, tree *hierarchy )
 			}
 		}
 	}
-	int i;
+
+	int ii;
 	int count = 0;
-	for ( j = 0; j < hierarchy->groups; ++j )
+	for ( jj=0; jj < hierarchy->groups; ++jj )
 	{
 		//printf("%d\n", count);
 		int mask = 1;
-		for ( i = 0; i < hierarchy->group_size[j]; ++i )
+		for ( ii=0; ii < hierarchy->group_size[jj]; ++ii )
 		{
-			if ( truth[count + i] )
+			if ( truth[count + ii] )
 			{
 				mask = 0;
 				break;
 			}
 		}
+
 		if ( mask )
 		{
-			for ( i = 0; i < hierarchy->group_size[j]; ++i )
+			for ( ii=0; ii < hierarchy->group_size[jj]; ++ii )
 			{
-				truth[count + i] = SECRET_NUM;
+				truth[count + ii] = SECRET_NUM;
 			}
 		}
-		count += hierarchy->group_size[j];
+		count += hierarchy->group_size[jj];
 	}
 }
-
-matrix load_labels_paths( char **paths, int n, char **labels, int k, tree *hierarchy )
+// 회귀???
+matrix load_regression_labels_paths( char **paths, int n, int k )
 {
 	matrix y = make_matrix( n, k );
-	int i;
-
-	for ( i=0; i<n && labels; ++i )
+	int i, j;
+	for ( i = 0; i < n; ++i )
 	{
-		fill_truth( paths[i], labels, k, y.vals[i] );
+		char labelpath[4096];
+		find_replace( paths[i], "images", "labels", labelpath );
+		find_replace( labelpath, "JPEGImages", "labels", labelpath );
+		find_replace( labelpath, ".BMP", ".txt", labelpath );
+		find_replace( labelpath, ".JPEG", ".txt", labelpath );
+		find_replace( labelpath, ".JPG", ".txt", labelpath );
+		find_replace( labelpath, ".JPeG", ".txt", labelpath );
+		find_replace( labelpath, ".Jpeg", ".txt", labelpath );
+		find_replace( labelpath, ".PNG", ".txt", labelpath );
+		find_replace( labelpath, ".TIF", ".txt", labelpath );
+		find_replace( labelpath, ".bmp", ".txt", labelpath );
+		find_replace( labelpath, ".jpeg", ".txt", labelpath );
+		find_replace( labelpath, ".jpg", ".txt", labelpath );
+		find_replace( labelpath, ".png", ".txt", labelpath );
+		find_replace( labelpath, ".tif", ".txt", labelpath );
 
-		if ( hierarchy )
+		//FILE *file = fopen( labelpath, "r" );
+		FILE *file; fopen_s( &file, labelpath, "r" );
+
+		for ( j = 0; j < k; ++j )
 		{
-			fill_hierarchy( y.vals[i], k, hierarchy );
+			//fscanf( file, "%f", &(y.vals[i][j]) );
+			fscanf_s( file, "%f", &(y.vals[i][j]) );
 		}
+		fclose( file );
 	}
-
 	return y;
 }
 
-matrix load_tags_paths( char **paths, int n, int k )
+matrix load_labels_paths( char **paths, int nn, char **labels, int kk, tree *hierarchy )
 {
-	matrix y = make_matrix( n, k );
-	int i;
-	int count = 0;
+	matrix yy = make_matrix( nn, kk );	// 목표값 메모리 할당(nn행, kk열)
 
-	for ( i=0; i<n; ++i )
+	int ii;
+	for ( ii=0; ii < nn && labels; ++ii )
+	{
+		fill_truth( paths[ii], labels, kk, yy.vals[ii] );	// 목표값 위치에 목표값을 "1.0" 으로 설정
+
+		if ( hierarchy )
+		{
+			fill_hierarchy( yy.vals[ii], kk, hierarchy );
+		}
+	}
+
+	return yy;
+}
+// m 개의 열로 목표값을 만들어 n 개의 목표값자료를 추가한다
+matrix load_tags_paths( char **paths, int nn, int kk )
+{
+	matrix yy = make_matrix( nn, kk );	// n 행, m 열의 배열을 생성한다
+
+	int ii;
+	//int count = 0;
+	for ( ii=0; ii < nn; ++ii )	// 자료개수를 반복한다
 	{
 		char label[4096];
-		find_replace( paths[i], "imgs", "labels", label );
-		find_replace( label, "_iconl.jpeg", ".txt", label );
-
+		find_replace( paths[ii], "images", "labels", label );
+		find_replace( label, ".jpg", ".txt", label );
 		//FILE *file = fopen( label, "r" );
 		FILE *file; fopen_s( &file, label, "r" );
 
-		if ( !file )
-		{
-			find_replace( label, "labels", "labels2", label );
-			//file = fopen( label, "r" );
-			fopen_s( &file, label, "r" );
+		if ( !file ) continue;	// 파일이 없으면 다음것을 찾는다
 
-			if ( !file ) continue;
-		}
-
-		++count;
+		// paths[ii] + images + labels + .jpg + .txt  파일을 열었으면
+		//++count;
 		int tag;
 
 		//while ( fscanf( file, "%d", &tag ) == 1 )
 		while ( fscanf_s( file, "%d", &tag ) == 1 )
 		{
-			if ( tag < k )
+			if ( tag < kk )
 			{
-				y.vals[i][tag] = 1;
+				yy.vals[ii][tag] = 1;
 			}
 		}
-
 		fclose( file );
 	}
-
-	printf( "%d/%d\n", count, n );
-	return y;
+	//printf("%d/%d\n", count, n);
+	return yy;
 }
-
+// 파일에서 분류딱지를 추출한다
 char **get_labels( char *filename )
 {
-	list *plist = get_paths( filename );
-	char **labels = (char **)list_to_array( plist );
-
+	list *plist		= get_paths( filename );
+	char **labels	= (char **)list_to_array( plist );
 	free_list( plist );
 	return labels;
 }
@@ -563,9 +813,255 @@ void free_data( data d )
 		free( d.X.vals );
 		free( d.y.vals );
 	}
+
+	if ( d.labels )
+	{
+		free( d.labels );
+	}
 }
 
-data load_data_region( int n, char **paths, int m, int w, int h, int size, int classes, float jitter, float hue, float saturation, float exposure )
+image get_segmentation_image( char *path, int w, int h, int classes )
+{
+	char labelpath[4096];
+	find_replace( path, "images", "mask", labelpath );
+	find_replace( labelpath, "JPEGImages", "mask", labelpath );
+	find_replace( labelpath, ".jpg", ".txt", labelpath );
+	find_replace( labelpath, ".JPG", ".txt", labelpath );
+	find_replace( labelpath, ".JPEG", ".txt", labelpath );
+	image mask = make_image( w, h, classes );
+
+	//FILE *file = fopen( labelpath, "r" );
+	FILE *file; fopen_s( &file, labelpath, "r" );
+
+	if ( !file ) file_error( labelpath );
+	char buff[32788];
+	int id;
+	image part = make_image( w, h, 1 );
+
+	//while ( fscanf( file, "%d %s", &id, buff ) == 2 )
+	while ( fscanf_s( file, "%d %s", &id, buff ) == 2 )
+	{
+		int n = 0;
+		int *rle = read_intlist( buff, &n, 0 );
+		load_rle( part, rle, n );
+		or_image( part, mask, id );
+		free( rle );
+	}
+
+	//exclusive_image(mask);
+	fclose( file );
+	free_image( part );
+	return mask;
+}
+
+image get_segmentation_image2( char *path, int w, int h, int classes )
+{
+	char labelpath[4096];
+	find_replace( path, "images", "mask", labelpath );
+	find_replace( labelpath, "JPEGImages", "mask", labelpath );
+	find_replace( labelpath, ".jpg", ".txt", labelpath );
+	find_replace( labelpath, ".JPG", ".txt", labelpath );
+	find_replace( labelpath, ".JPEG", ".txt", labelpath );
+	image mask = make_image( w, h, classes+1 );
+
+	int i;
+	for ( i = 0; i < w*h; ++i )
+	{
+		mask.data[w*h*classes + i] = 1;
+	}
+
+	//FILE *file = fopen( labelpath, "r" );
+	FILE *file; fopen_s( &file, labelpath, "r" );
+
+	if ( !file ) file_error( labelpath );
+	char buff[32788];
+	int id;
+	image part = make_image( w, h, 1 );
+
+	//while ( fscanf( file, "%d %s", &id, buff ) == 2 )
+	while ( fscanf_s( file, "%d %s", &id, buff ) == 2 )
+	{
+		int n = 0;
+		int *rle = read_intlist( buff, &n, 0 );
+		load_rle( part, rle, n );
+		or_image( part, mask, id );
+
+		for ( i = 0; i < w*h; ++i )
+		{
+			if ( part.data[i] ) mask.data[w*h*classes + i] = 0;
+		}
+
+		free( rle );
+	}
+
+	//exclusive_image(mask);
+	fclose( file );
+	free_image( part );
+	return mask;
+}
+
+data load_data_seg( int n
+				, char **paths
+				, int m
+				, int w
+				, int h
+				, int classes
+				, int min
+				, int max
+				, float angle
+				, float aspect
+				, float hue
+				, float saturation
+				, float exposure
+				, int div )
+{
+	char **random_paths = get_random_paths( paths, n, m );
+	int i;
+	data d = { 0 };
+	d.shallow = 0;
+
+	d.X.rows = n;
+	d.X.vals = calloc( d.X.rows, sizeof( float* ) );
+	d.X.cols = h*w*3;
+
+
+	d.y.rows = n;
+	d.y.cols = h*w*classes/div/div;
+	d.y.vals = calloc( d.X.rows, sizeof( float* ) );
+
+	for ( i = 0; i < n; ++i )
+	{
+		image orig = load_image_color( random_paths[i], 0, 0 );
+		augment_args arg = random_augment_args( orig, angle, aspect, min, max, w, h );
+		image sized = rotate_crop_image( orig
+										, arg.rad
+										, arg.scale
+										, arg.w
+										, arg.h
+										, arg.dx
+										, arg.dy
+										, arg.aspect );
+
+		int flip = rand()%2;
+		if ( flip ) flip_image( sized );
+		random_distort_image( sized, hue, saturation, exposure );
+		d.X.vals[i] = sized.data;
+
+		image mask = get_segmentation_image( random_paths[i], orig.w, orig.h, classes );
+		//image mask = make_image(orig.w, orig.h, classes+1);
+		image sized_m = rotate_crop_image( mask
+										, arg.rad
+										, arg.scale/div
+										, arg.w/div
+										, arg.h/div
+										, arg.dx/div
+										, arg.dy/div
+										, arg.aspect );
+
+		if ( flip ) flip_image( sized_m );
+		d.y.vals[i] = sized_m.data;
+
+		free_image( orig );
+		free_image( mask );
+
+		/*
+		image rgb = mask_to_rgb( sized_m, classes );
+		show_image( rgb, "part" );
+		show_image( sized, "orig" );
+		cvWaitKey( 0 );
+		free_image( rgb );
+		*/
+	}
+
+	free( random_paths );
+
+	return d;
+}
+
+data load_data_iseg( int n
+				, char **paths
+				, int m
+				, int w
+				, int h
+				, int classes
+				, int boxes
+				, int coords
+				, int min
+				, int max
+				, float angle
+				, float aspect
+				, float hue
+				, float saturation
+				, float exposure )
+{
+	char **random_paths = get_random_paths( paths, n, m );
+
+	data newd = { 0 };
+	newd.shallow = 0;
+	newd.X.rows = n;
+	newd.X.vals = calloc( newd.X.rows, sizeof( float* ) );
+	newd.X.cols = h*w*3;
+
+	newd.y = make_matrix( n, (coords+1)*boxes );
+
+	int ii;
+	for ( ii=0; ii < n; ++ii )
+	{
+		image orig			= load_image_color( random_paths[ii], 0, 0 );
+		augment_args arg	= random_augment_args( orig, angle, aspect, min, max, w, h );
+		image sized			= rotate_crop_image( orig
+											, arg.rad
+											, arg.scale
+											, arg.w
+											, arg.h
+											, arg.dx
+											, arg.dy
+											, arg.aspect );
+
+		int flip = rand()%2;
+		if ( flip ) flip_image( sized );
+		random_distort_image( sized, hue, saturation, exposure );
+		newd.X.vals[ii] = sized.data;
+		//show_image(sized, "image");
+
+		fill_truth_iseg( random_paths[ii]
+					, boxes
+					, newd.y.vals[ii]
+					, classes
+					, orig.w
+					, orig.h
+					, arg
+					, flip
+					, 14
+					, 14 );
+
+		free_image( orig );
+
+		/*
+		image rgb = mask_to_rgb( sized_m, classes );
+		show_image( rgb, "part" );
+		show_image( sized, "orig" );
+		cvWaitKey( 0 );
+		free_image( rgb );
+		*/
+	}
+
+	free( random_paths );
+
+	return newd;
+}
+
+data load_data_region( int n
+					, char **paths
+					, int m
+					, int w
+					, int h
+					, int size
+					, int classes
+					, float jitter
+					, float hue
+					, float saturation
+					, float exposure )
 {
 	char **random_paths = get_random_paths( paths, n, m );
 	int i;
@@ -579,21 +1075,20 @@ data load_data_region( int n, char **paths, int m, int w, int h, int size, int c
 
 	int k = size*size*(5+classes);
 	d.y = make_matrix( n, k );
-
-	for ( i=0; i<n; ++i )
+	for ( i = 0; i < n; ++i )
 	{
 		image orig = load_image_color( random_paths[i], 0, 0 );
 
 		int oh = orig.h;
 		int ow = orig.w;
 
-		int dw = (ow*jitter);
-		int dh = (oh*jitter);
+		int dw = (int)( ow*jitter );
+		int dh = (int)( oh*jitter );
 
-		int pleft  = rand_uniform( -dw, dw );
-		int pright = rand_uniform( -dw, dw );
-		int ptop   = rand_uniform( -dh, dh );
-		int pbot   = rand_uniform( -dh, dh );
+		int pleft  = (int)rand_uniform( -dw, dw );
+		int pright = (int)rand_uniform( -dw, dw );
+		int ptop   = (int)rand_uniform( -dh, dh );
+		int pbot   = (int)rand_uniform( -dh, dh );
 
 		int swidth =  ow - pleft - pright;
 		int sheight = oh - ptop - pbot;
@@ -601,31 +1096,22 @@ data load_data_region( int n, char **paths, int m, int w, int h, int size, int c
 		float sx = (float)swidth  / ow;
 		float sy = (float)sheight / oh;
 
-		int flip = random_gen()%2;
+		int flip = rand()%2;
 		image cropped = crop_image( orig, pleft, ptop, swidth, sheight );
 
-		float dx = ((float)pleft/ow)/sx;
-		float dy = ((float)ptop /oh)/sy;
+		float dx = ( (float)pleft/ow ) / sx;
+		float dy = ( (float)ptop /oh ) / sy;
 
 		image sized = resize_image( cropped, w, h );
 		if ( flip ) flip_image( sized );
 		random_distort_image( sized, hue, saturation, exposure );
 		d.X.vals[i] = sized.data;
 
-		fill_truth_region( random_paths[i]
-			, d.y.vals[i]
-			, classes
-			, size
-			, flip
-			, dx
-			, dy
-			, 1./sx
-			, 1./sy );
+		fill_truth_region( random_paths[i], d.y.vals[i], classes, size, flip, dx, dy, 1.0f/sx, 1.0f/sy );
 
 		free_image( orig );
 		free_image( cropped );
 	}
-
 	free( random_paths );
 	return d;
 }
@@ -643,8 +1129,7 @@ data load_data_compare( int n, char **paths, int m, int classes, int w, int h )
 
 	int k = 2*(classes);
 	d.y = make_matrix( n, k );
-
-	for ( i=0; i<n; ++i )
+	for ( i = 0; i < n; ++i )
 	{
 		image im1 = load_image_color( paths[i*2], w, h );
 		image im2 = load_image_color( paths[i*2+1], w, h );
@@ -680,7 +1165,7 @@ data load_data_compare( int n, char **paths, int m, int classes, int w, int h )
 			if ( d.y.vals[i][2*id + 1] < iou ) d.y.vals[i][2*id + 1] = iou;
 		}
 
-		for ( j=0; j<classes; ++j )
+		for ( j = 0; j < classes; ++j )
 		{
 			if ( d.y.vals[i][2*j] > .5 &&  d.y.vals[i][2*j+1] < .5 )
 			{
@@ -698,21 +1183,19 @@ data load_data_compare( int n, char **paths, int m, int classes, int w, int h )
 				d.y.vals[i][2*j+1] = SECRET_NUM;
 			}
 		}
-
 		fclose( fp1 );
 		fclose( fp2 );
 
 		free_image( im1 );
 		free_image( im2 );
 	}
-
 	if ( m ) free( paths );
 	return d;
 }
 
 data load_data_swag( char **paths, int n, int classes, float jitter )
 {
-	int index = random_gen()%n;
+	int index = rand()%n;
 	char *random_path = paths[index];
 
 	image orig = load_image_color( random_path, 0, 0 );
@@ -728,34 +1211,34 @@ data load_data_swag( char **paths, int n, int classes, float jitter )
 	d.X.vals = calloc( d.X.rows, sizeof( float* ) );
 	d.X.cols = h*w*3;
 
-	int k = (4+classes)*30;
+	int k = (4+classes)*90;
 	d.y = make_matrix( 1, k );
 
-	int dw = w*jitter;
-	int dh = h*jitter;
+	int dw = (int)( w*jitter );
+	int dh = (int)( h*jitter );
 
-	int pleft  = rand_uniform( -dw, dw );
-	int pright = rand_uniform( -dw, dw );
-	int ptop   = rand_uniform( -dh, dh );
-	int pbot   = rand_uniform( -dh, dh );
+	int pleft  = (int)rand_uniform( -dw, dw );
+	int pright = (int)rand_uniform( -dw, dw );
+	int ptop   = (int)rand_uniform( -dh, dh );
+	int pbot   = (int)rand_uniform( -dh, dh );
 
 	int swidth =  w - pleft - pright;
 	int sheight = h - ptop - pbot;
 
-	float sx = (float)swidth  / w;
-	float sy = (float)sheight / h;
+	float sx = (float)( swidth  / w );
+	float sy = (float)( sheight / h );
 
-	int flip = random_gen()%2;
+	int flip = rand()%2;
 	image cropped = crop_image( orig, pleft, ptop, swidth, sheight );
 
-	float dx = ((float)pleft/w)/sx;
-	float dy = ((float)ptop /h)/sy;
+	float dx = ( (float)pleft/w ) / sx;
+	float dy = ( (float)ptop /h ) / sy;
 
 	image sized = resize_image( cropped, w, h );
 	if ( flip ) flip_image( sized );
 	d.X.vals[0] = sized.data;
 
-	fill_truth_swag( random_path, d.y.vals[0], classes, flip, dx, dy, 1./sx, 1./sy );
+	fill_truth_swag( random_path, d.y.vals[0], classes, flip, dx, dy, 1.0f/sx, 1.0f/sy );
 
 	free_image( orig );
 	free_image( cropped );
@@ -788,202 +1271,423 @@ data load_data_detection( int n
 	for ( i = 0; i < n; ++i )
 	{
 		image orig = load_image_color( random_paths[i], 0, 0 );
+		image sized = make_image( w, h, orig.c );
+		fill_image( sized, .5 );
 
-		int oh = orig.h;
-		int ow = orig.w;
+		float dw = jitter * orig.w;
+		float dh = jitter * orig.h;
 
-		int dw = (ow*jitter);
-		int dh = (oh*jitter);
+		float new_ar = (orig.w + rand_uniform( -dw, dw )) / (orig.h + rand_uniform( -dh, dh ));
+		float scale = rand_uniform( .25, 2 );
 
-		int pleft  = rand_uniform_strong( -dw, dw );
-		int pright = rand_uniform_strong( -dw, dw );
-		int ptop   = rand_uniform_strong( -dh, dh );
-		int pbot   = rand_uniform_strong( -dh, dh );
+		float nw, nh;
 
-		int swidth =  ow - pleft - pright;
-		int sheight = oh - ptop - pbot;
+		if ( new_ar < 1 )
+		{
+			nh = scale * h;
+			nw = nh * new_ar;
+		}
+		else
+		{
+			nw = scale * w;
+			nh = nw / new_ar;
+		}
 
-		float sx = (float)swidth  / ow;
-		float sy = (float)sheight / oh;
+		float dx = rand_uniform( 0, w - nw );
+		float dy = rand_uniform( 0, h - nh );
 
-		int flip = random_gen()%2;
-		image cropped = crop_image( orig, pleft, ptop, swidth, sheight );
+		place_image( orig, (int)nw, (int)nh, (int)dx, (int)dy, sized );
 
-		float dx = ((float)pleft/ow)/sx;
-		float dy = ((float)ptop /oh)/sy;
-
-		image sized = resize_image( cropped, w, h );
-		if ( flip ) flip_image( sized );
 		random_distort_image( sized, hue, saturation, exposure );
+
+		int flip = rand()%2;
+		if ( flip ) flip_image( sized );
 		d.X.vals[i] = sized.data;
 
-		fill_truth_detection( random_paths[i]
-							, boxes
-							, d.y.vals[i]
-							, classes
-							, flip
-							, dx
-							, dy
-							, 1./sx
-							, 1./sy );
+
+		fill_truth_detection( random_paths[i], boxes, d.y.vals[i], classes, flip, -dx/w, -dy/h, nw/w, nh/h );
 
 		free_image( orig );
-		free_image( cropped );
 	}
 	free( random_paths );
 	return d;
 }
+/// MNIST 자료 탑재
+data make_data_mnist( char **paths )
+{
+	data newd = { 0 };
+	newd.shallow = 0;
 
+	MNIST_ImageHeader imgHeader;
+	MNIST_LabelHeader lblHeader;
 
+	FILE *rd_image; fopen_s( &rd_image, paths[0], "r" );	// 이미지자료
+	fread( &imgHeader, sizeof( MNIST_ImageHeader ), 1, rd_image );
+	MNIST_ImageSwap( &imgHeader );
+
+	FILE *rd_label; fopen_s( &rd_label, paths[1], "r" );	// 꼬리표
+	fread( &lblHeader, sizeof( MNIST_LabelHeader ), 1, rd_label );
+	MNIST_LabelSwap( &lblHeader );
+
+	if ( imgHeader.magic != MNIST_IMAGE_MAGIC )
+	{
+		printf( "MNIST 입력자료 탑재 및 생성 실패!!!\n" );
+		printf( "이미지 고유번호: %d, 파일자료 고유번호: %d 로 다름", MNIST_IMAGE_MAGIC, imgHeader.magic );
+
+		return newd;
+	}
+	else if ( lblHeader.magic != MNIST_LABEL_MAGIC )
+	{
+		printf( "MNIST 꼬리표자료 탑재 및 생성 실패!!!\n" );
+		printf( "꼬리표 고유번호: %d, 파일자료 고유번호: %d 로 다름", MNIST_LABEL_MAGIC, lblHeader.magic );
+
+		return newd;
+	}
+
+	matrix XX;	// 사비값
+	XX.rows = imgHeader.GaeSu;
+	XX.vals = calloc( XX.rows, sizeof( float* ) );
+	XX.cols = 0;
+
+	matrix yy;	// 꼬리표
+	yy.rows = lblHeader.GaeSu;
+	yy.vals = calloc( yy.rows, sizeof( float* ) );
+	yy.cols = 0;
+
+	int GaRo	= imgHeader.GaRo;
+	int SeRo	= imgHeader.SeRo;
+	int Bo		= GaRo*SeRo;
+
+	newd.labels	= calloc( yy.rows, sizeof( int ) );
+	//void **DdakJi	= calloc( yy.rows, sizeof( void* ) );
+	//int *DdakJi	= (int *)malloc( yy.rows );
+	unsigned char *chImg	= (unsigned char*)malloc( Bo );
+	unsigned char Lbl;
+
+	int ii, jj;
+	for ( ii=0; ii<imgHeader.GaeSu; ++ii )
+	{
+		fseek( rd_image, 16+Bo*ii, SEEK_SET );
+		fseek( rd_label, 8+ii, SEEK_SET );
+
+		fread( chImg, Bo, 1, rd_image );
+		fread( &Lbl, 1, 1, rd_label );
+
+		image SaBi		= make_image( GaRo, SeRo, 1 );	// 이미지메모리 할당
+		image MokPyo	= make_image( 10, 1, 1 );		// 목표값메모리 할당
+
+		for ( jj=0; jj < Bo; ++jj )
+		{
+			SaBi.data[jj]	= (float)chImg[jj] / 255.0f;
+		}
+
+		XX.vals[ii]	= SaBi.data;
+		XX.cols		= SaBi.w*SaBi.h*SaBi.c;
+
+		int mGabWiChi	= (int)Lbl;
+		MokPyo.data[mGabWiChi]	= 1.0;
+		yy.vals[ii]	= MokPyo.data;
+		yy.cols		= MokPyo.w*MokPyo.h*MokPyo.c;
+
+		//DdakJi[ii]		= mGabWiChi;
+		newd.labels[ii]	= mGabWiChi;
+	}
+
+	newd.X = XX;
+	newd.y = yy;
+	//newd.labels	= DdakJi;
+
+	free( chImg );
+
+	fclose( rd_image );
+	fclose( rd_label );
+
+	return newd;
+}
+
+data load_data_mnist( data *WonBon
+					, int nn	// 사비자료 개수
+					, int mm	// 자료 총 개수
+					, int kk	// 분류 개수
+					, int ww
+					, int hh )
+{
+//	pthread_mutex_lock( &mutex );
+
+	data newd = { 0 };
+	newd.shallow = 0;
+
+	matrix XX;	// 사비값
+	XX.rows = nn;
+	XX.vals = calloc( XX.rows, sizeof( float* ) );
+	XX.cols = 0;
+
+	matrix yy;
+	yy.vals	= calloc( nn, sizeof( float* ) );
+	XX.cols = 0;
+
+	int ii, jj;
+
+	//random_device	BbuRiGae;
+	//srand( (unsigned int)time( NULL ) );
+
+	for ( ii=0; ii < nn; ++ii )
+	{
+		srand( (unsigned int)time( NULL ) );
+
+		//int WiChi = rand() % mm;
+		int WiChi = (unsigned int)( UNIFORM_ZERO_THRU_ONE * mm );;
+
+		XX.vals[ii]	= WonBon->X.vals[WiChi];
+		XX.cols		= WonBon->X.cols;
+
+		yy.vals[ii]	= WonBon->y.vals[WiChi];
+		yy.cols		= WonBon->y.cols;
+	}
+
+	newd.X = XX;
+	newd.y = yy;
+
+//	pthread_mutex_unlock( &mutex );
+
+	return newd;
+}
+
+// 망 종류별로 자료를 탑재한다
 void *load_thread( void *ptr )
 {
-	//srand(time(0));
-	//printf("Loading data: %d\n", random_gen());
-	load_args a = *(struct load_args*)ptr;
+	//printf("Loading data: %d\n", rand());
+	load_args arg = *(struct load_args*)ptr;
 
-	if ( a.exposure == 0 ) a.exposure = 1;
-	if ( a.saturation == 0 ) a.saturation = 1;
-	if ( a.aspect == 0 ) a.aspect = 1;
+	if ( arg.exposure == 0 )	arg.exposure	= 1;
+	if ( arg.saturation == 0 )	arg.saturation	= 1;
+	if ( arg.aspect == 0 )		arg.aspect		= 1;
 
-	if ( a.type == OLD_CLASSIFICATION_DATA )
+	if ( arg.type == OLD_CLASSIFICATION_DATA )
 	{
-		*a.d = load_data_old( a.paths, a.n, a.m, a.labels, a.classes, a.w, a.h );
+		*arg.d = load_data_old( arg.paths
+			, arg.n
+			, arg.m
+			, arg.labels
+			, arg.classes
+			, arg.w
+			, arg.h );
 	}
-	else if ( a.type == CLASSIFICATION_DATA )
+	else if ( arg.type == REGRESSION_DATA )
 	{
-		*a.d = load_data_augment( a.paths
-								, a.n
-								, a.m
-								, a.labels
-								, a.classes
-								, a.hierarchy
-								, a.min
-								, a.max
-								, a.size
-								, a.angle
-								, a.aspect
-								, a.hue
-								, a.saturation
-								, a.exposure );
+		*arg.d = load_data_regression( arg.paths
+			, arg.n
+			, arg.m
+			, arg.classes
+			, arg.min
+			, arg.max
+			, arg.size
+			, arg.angle
+			, arg.aspect
+			, arg.hue
+			, arg.saturation
+			, arg.exposure );
 	}
-	else if ( a.type == SUPER_DATA )
+	else if ( arg.type == CLASSIFICATION_DATA )
 	{
-		*a.d = load_data_super( a.paths, a.n, a.m, a.w, a.h, a.scale );
+		*arg.d = load_data_augment( arg.paths
+			, arg.n
+			, arg.m
+			, arg.labels
+			, arg.classes
+			, arg.hierarchy
+			, arg.min
+			, arg.max
+			, arg.size
+			, arg.angle
+			, arg.aspect
+			, arg.hue
+			, arg.saturation
+			, arg.exposure
+			, arg.center );
 	}
-	else if ( a.type == WRITING_DATA )
+	else if ( arg.type == SUPER_DATA )
 	{
-		*a.d = load_data_writing( a.paths, a.n, a.m, a.w, a.h, a.out_w, a.out_h );
+		*arg.d = load_data_super( arg.paths, arg.n, arg.m, arg.w, arg.h, arg.scale );
 	}
-	else if ( a.type == REGION_DATA )
+	else if ( arg.type == WRITING_DATA )
 	{
-		*a.d = load_data_region( a.n
-							, a.paths
-							, a.m
-							, a.w
-							, a.h
-							, a.num_boxes
-							, a.classes
-							, a.jitter
-							, a.hue
-							, a.saturation
-							, a.exposure );
+		*arg.d = load_data_writing( arg.paths, arg.n, arg.m, arg.w, arg.h, arg.out_w, arg.out_h );
 	}
-	else if ( a.type == DETECTION_DATA )
+	else if ( arg.type == INSTANCE_DATA )
 	{
-		*a.d = load_data_detection( a.n
-							, a.paths
-							, a.m
-							, a.w
-							, a.h
-							, a.num_boxes
-							, a.classes
-							, a.jitter
-							, a.hue
-							, a.saturation
-							, a.exposure );
+		*arg.d = load_data_iseg( arg.n
+			, arg.paths
+			, arg.m
+			, arg.w
+			, arg.h
+			, arg.classes
+			, arg.num_boxes
+			, arg.coords
+			, arg.min
+			, arg.max
+			, arg.angle
+			, arg.aspect
+			, arg.hue
+			, arg.saturation
+			, arg.exposure );
 	}
-	else if ( a.type == SWAG_DATA )
+	else if ( arg.type == SEGMENTATION_DATA )
 	{
-		*a.d = load_data_swag( a.paths, a.n, a.classes, a.jitter );
+		*arg.d = load_data_seg( arg.n
+			, arg.paths
+			, arg.m
+			, arg.w
+			, arg.h
+			, arg.classes
+			, arg.min
+			, arg.max
+			, arg.angle
+			, arg.aspect
+			, arg.hue
+			, arg.saturation
+			, arg.exposure
+			, arg.scale );
 	}
-	else if ( a.type == COMPARE_DATA )
+	else if ( arg.type == REGION_DATA )
 	{
-		*a.d = load_data_compare( a.n, a.paths, a.m, a.classes, a.w, a.h );
+		*arg.d = load_data_region( arg.n
+			, arg.paths
+			, arg.m
+			, arg.w
+			, arg.h
+			, arg.num_boxes
+			, arg.classes
+			, arg.jitter
+			, arg.hue
+			, arg.saturation
+			, arg.exposure );
 	}
-	else if ( a.type == IMAGE_DATA )
+	else if ( arg.type == DETECTION_DATA )
 	{
-		*(a.im) = load_image_color( a.path, 0, 0 );
-		*(a.resized) = resize_image( *(a.im), a.w, a.h );
+		*arg.d = load_data_detection( arg.n
+			, arg.paths
+			, arg.m
+			, arg.w
+			, arg.h
+			, arg.num_boxes
+			, arg.classes
+			, arg.jitter
+			, arg.hue
+			, arg.saturation
+			, arg.exposure );
 	}
-	else if ( a.type == TAG_DATA )
+	else if ( arg.type == SWAG_DATA )
 	{
-		*a.d = load_data_tag( a.paths
-							, a.n
-							, a.m
-							, a.classes
-							, a.min
-							, a.max
-							, a.size
-							, a.angle
-							, a.aspect
-							, a.hue
-							, a.saturation
-							, a.exposure );
+		*arg.d = load_data_swag( arg.paths, arg.n, arg.classes, arg.jitter );
+	}
+	else if ( arg.type == COMPARE_DATA )
+	{
+		*arg.d = load_data_compare( arg.n, arg.paths, arg.m, arg.classes, arg.w, arg.h );
+	}
+	else if ( arg.type == IMAGE_DATA )
+	{
+		*(arg.im) = load_image_color( arg.path, 0, 0 );
+		*(arg.resized) = resize_image( *(arg.im), arg.w, arg.h );
+	}
+	else if ( arg.type == LETTERBOX_DATA )
+	{
+		*(arg.im) = load_image_color( arg.path, 0, 0 );
+		*(arg.resized) = letterbox_image( *(arg.im), arg.w, arg.h );
+	}
+	else if ( arg.type == TAG_DATA )
+	{
+		*arg.d = load_data_tag( arg.paths
+			, arg.n
+			, arg.m
+			, arg.classes
+			, arg.min
+			, arg.max
+			, arg.size
+			, arg.angle
+			, arg.aspect
+			, arg.hue
+			, arg.saturation
+			, arg.exposure );
+	}
+	else if ( arg.type == MNIST_DATA )
+	{
+		*arg.d	= load_data_mnist( arg.JaRyo_MNIST
+				, arg.n
+				, arg.m
+				, arg.classes
+				, arg.w
+				, arg.h );
+	}
+	else if ( arg.type == BYEORIM_DATA )
+	{
+
 	}
 
 	free( ptr );
+
 	return 0;
 }
 
 pthread_t load_data_in_thread( load_args args )
 {
 	pthread_t thread;
-
 	struct load_args *ptr = calloc( 1, sizeof( struct load_args ) );
 	*ptr = args;
 
 	if ( pthread_create( &thread, 0, load_thread, ptr ) )
-		error( "Thread creation failed" );
+		//error( "Thread creation failed" );	//  [7/16/2018 jobs]
+		error( "쓰레드 생성실패!..." );		//  [7/16/2018 jobs]
 
 	return thread;
 }
 
 void *load_threads( void *ptr )
 {
-	//srand(time(0));
-	int i;
-	load_args args = *(load_args *)ptr;
+	load_args args	= *(load_args *)ptr;
+
 	if ( args.threads == 0 ) args.threads = 1;
+
 	data *out = args.d;
 	int total = args.n;
 	free( ptr );
-	data *buffers = calloc( args.threads, sizeof( data ) );
-	pthread_t *threads = calloc( args.threads, sizeof( pthread_t ) );
 
-	for ( i=0; i<args.threads; ++i )
+	data		*buffers	= calloc( args.threads, sizeof( data ) );
+	pthread_t	*threads	= calloc( args.threads, sizeof( pthread_t ) );
+
+	int ii;
+	for ( ii=0; ii < args.threads; ++ii )
 	{
-		args.d = buffers + i;
-		args.n = (i+1) * total/args.threads - i * total/args.threads;
-		threads[i] = load_data_in_thread( args );
+		args.d		= buffers + ii;
+		args.n		= ((ii+1) * total)/args.threads - (ii*total)/args.threads;
+		threads[ii]	= load_data_in_thread( args );
 	}
 
-	for ( i=0; i<args.threads; ++i )
+	for ( ii=0; ii < args.threads; ++ii )
 	{
-		pthread_join( threads[i], 0 );
+		pthread_join( threads[ii], 0 );
 	}
 
-	*out = concat_datas( buffers, args.threads );
+	*out = concat_datas( buffers, args.threads );	// 버퍼에 자료를 엮어서 담아온다
 	out->shallow = 0;
 
-	for ( i=0; i<args.threads; ++i )
+	for ( ii=0; ii < args.threads; ++ii )
 	{
-		buffers[i].shallow = 1;
-		free_data( buffers[i] );
+		buffers[ii].shallow = 1;
+		free_data( buffers[ii] );
 	}
 
 	free( buffers );
 	free( threads );
+
 	return 0;
+}
+
+void load_data_blocking( load_args args )
+{
+	struct load_args *ptr = calloc( 1, sizeof( struct load_args ) );
+	*ptr = args;
+	load_thread( ptr );
 }
 
 pthread_t load_data( load_args args )
@@ -993,59 +1697,74 @@ pthread_t load_data( load_args args )
 	*ptr = args;
 
 	if ( pthread_create( &thread, 0, load_threads, ptr ) )
-		//error( "Thread creation failed" );
-		error( "쓰레드 생성 실패!!!" );
+		error( "Thread creation failed" );
 
 	return thread;
 }
 
-data load_data_writing( char **paths, int n, int m, int w, int h, int out_w, int out_h )
+data load_data_writing( char **paths, int nn, int mm, int ww, int hh, int out_w, int out_h )
 {
-	if ( m ) paths = get_random_paths( paths, n, m );
-	char **replace_paths = find_replace_paths( paths, n, ".png", "-label.png" );
+	if ( mm ) paths = get_random_paths( paths, nn, mm );
 
-	data d = { 0 };
-	d.shallow = 0;
-	d.X = load_image_paths( paths, n, w, h );
-	d.y = load_image_paths_gray( replace_paths, n, out_w, out_h );
+	char **replace_paths = find_replace_paths( paths, nn, ".png", "-label.png" );
 
-	if ( m ) free( paths );
-	int i;
+	data newd	 = { 0 };
+	newd.shallow = 0;
+	newd.X		 = load_image_paths( paths, nn, ww, hh );
+	newd.y		 = load_image_paths_gray( replace_paths, nn, out_w, out_h );
 
-	for ( i = 0; i < n; ++i ) free( replace_paths[i] );
-
+	if ( mm ) free( paths );
+	int ii;
+	for ( ii=0; ii < nn; ++ii ) free( replace_paths[ii] );
 	free( replace_paths );
-	return d;
+
+	return newd;
 }
-// 자료목록(파일경로 및 이름) 으로 뿌린 자료를 탑재한다
-data load_data_old( char **paths, int n, int m, char **labels, int k, int w, int h )
+
+data load_data_old( char **paths, int nn, int mm, char **labels, int kk, int ww, int hh )
 {
-	if ( m )
-		paths = get_random_paths( paths, n, m );
+	// nn 개수만큼 뿌려서 사비자료 파일이름을 가져온다
+	if ( mm ) paths = get_random_paths( paths, nn, mm );
 
-	data d = { 0 };
-	d.shallow = 0;
-	d.X = load_image_paths( paths, n, w, h );
-	d.y = load_labels_paths( paths, n, labels, k, 0 );
+	data newd = { 0 };
+	newd.shallow = 0;
+	// nn 개수만큼 사비자료를 가져온다
+	newd.X = load_image_paths( paths, nn, ww, hh );
+	// nn 개수만큼 목표자료를 가져온다
+	newd.y = load_labels_paths( paths, nn, labels, kk, 0 );
 
-	if ( m )
-		free( paths );
+	if ( mm ) free( paths );
 
-	return d;
+	return newd;
 }
 
 /*
-   data load_data_study(char **paths, int n, int m, char **labels, int k, int min, int max, int size, float angle, float aspect, float hue, float saturation, float exposure)
-   {
+data load_data_study( char **paths
+					, int n
+					, int m
+					, char **labels
+					, int k
+					, int min
+					, int max
+					, int size
+					, float angle
+					, float aspect
+					, float hue
+					, float saturation
+					, float exposure)
+{
    data d = {0};
    d.indexes = calloc(n, sizeof(int));
+
    if(m) paths = get_random_paths_indexes(paths, n, m, d.indexes);
+
    d.shallow = 0;
    d.X = load_image_augment_paths(paths, n, min, max, size, angle, aspect, hue, saturation, exposure);
    d.y = load_labels_paths(paths, n, labels, k);
+
    if(m) free(paths);
    return d;
-   }
+}
  */
 
 data load_data_super( char **paths, int n, int m, int w, int h, int scale )
@@ -1067,7 +1786,7 @@ data load_data_super( char **paths, int n, int m, int w, int h, int scale )
 	{
 		image im = load_image_color( paths[i], 0, 0 );
 		image crop = random_crop_image( im, w*scale, h*scale );
-		int flip = random_gen()%2;
+		int flip = rand()%2;
 		if ( flip ) flip_image( crop );
 		image resize = resize_image( crop, w, h );
 		d.X.vals[i] = resize.data;
@@ -1078,12 +1797,126 @@ data load_data_super( char **paths, int n, int m, int w, int h, int scale )
 	if ( m ) free( paths );
 	return d;
 }
-// 파일이름으로 입력값과 목표값을 탑재한다
-data load_data_augment( char **paths
-					, int n
-					, int m
+
+data load_data_regression( char **paths
+						, int n
+						, int m
+						, int k
+						, int min
+						, int max
+						, int size
+						, float angle
+						, float aspect
+						, float hue
+						, float saturation
+						, float exposure )
+{
+	if ( m ) paths = get_random_paths( paths, n, m );
+
+	data d = { 0 };
+	d.shallow = 0;
+	d.X = load_image_augment_paths( paths
+								, n
+								, min
+								, max
+								, size
+								, angle
+								, aspect
+								, hue
+								, saturation
+								, exposure, 0 );
+	d.y = load_regression_labels_paths( paths, n, k );
+
+	if ( m ) free( paths );
+	return d;
+}
+
+data select_data( data *orig, int *inds )
+{
+	data d = { 0 };
+	d.shallow = 1;
+	d.w = orig[0].w;
+	d.h = orig[0].h;
+
+	d.X.rows = orig[0].X.rows;
+	d.y.rows = orig[0].X.rows;
+
+	d.X.cols = orig[0].X.cols;
+	d.y.cols = orig[0].y.cols;
+
+	d.X.vals = calloc( orig[0].X.rows, sizeof( float * ) );
+	d.y.vals = calloc( orig[0].y.rows, sizeof( float * ) );
+	int i;
+	for ( i = 0; i < d.X.rows; ++i )
+	{
+		d.X.vals[i] = orig[inds[i]].X.vals[i];
+		d.y.vals[i] = orig[inds[i]].y.vals[i];
+	}
+	return d;
+}
+
+data *tile_data( data orig, int divs, int size )
+{
+	data *outd = calloc( divs*divs, sizeof( data ) );
+	int ii, jj;
+
+	#pragma omp parallel for
+	for ( ii=0; ii < divs*divs; ++ii )
+	{
+		data newd;
+		newd.shallow = 0;
+		newd.w		= orig.w/divs * size;
+		newd.h		= orig.h/divs * size;
+		newd.X.rows	= orig.X.rows;
+		newd.X.cols	= newd.w*newd.h*3;
+		newd.X.vals	= calloc( newd.X.rows, sizeof( float* ) );
+
+		newd.y = copy_matrix( orig.y );
+
+		#pragma omp parallel for
+		for ( jj=0; jj < orig.X.rows; ++jj )
+		{
+			int xx = (ii%divs) * orig.w / divs - (newd.w - orig.w/divs)/2;
+			int yy = (ii/divs) * orig.h / divs - (newd.h - orig.h/divs)/2;
+			image im = float_to_image( orig.w, orig.h, 3, orig.X.vals[jj] );
+			newd.X.vals[jj] = crop_image( im, xx, yy, newd.w, newd.h ).data;
+		}
+
+		outd[ii] = newd;
+	}
+
+	return outd;
+}
+
+data resize_data( data orig, int ww, int hh )
+{
+	int ii;
+
+	data newd	= { 0 };
+	newd.shallow = 0;
+	newd.w		= ww;
+	newd.h		= hh;
+	newd.X.rows = orig.X.rows;
+	newd.X.cols = ww*hh*3;
+	newd.X.vals = calloc( newd.X.rows, sizeof( float* ) );
+
+	newd.y = copy_matrix( orig.y );
+
+	#pragma omp parallel for
+	for ( ii=0; ii < orig.X.rows; ++ii )
+	{
+		image im = float_to_image( orig.w, orig.h, 3, orig.X.vals[ii] );
+		newd.X.vals[ii] = resize_image( im, ww, hh ).data;
+	}
+
+	return newd;
+}
+// 분류망에 필요한 자료를 탑재한다
+data load_data_augment( char **paths	// 모든(사비)자료 파일목록
+					, int nn			// 자료개수
+					, int mm			// 자료 총개수
 					, char **labels
-					, int k
+					, int kk
 					, tree *hierarchy
 					, int min
 					, int max
@@ -1092,38 +1925,40 @@ data load_data_augment( char **paths
 					, float aspect
 					, float hue
 					, float saturation
-					, float exposure )
+					, float exposure
+					, int center )
 {
-	if ( m ) paths = get_random_paths( paths, n, m );
+	// n개의 자료(사비 파일명)목록을 뿌려서 가져온다(총 자료개수(m 개)를 넘지않게)
+	if ( mm ) paths = get_random_paths( paths, nn, mm );
 
-	data d = { 0 };
-	d.shallow = 0;
+	data newd = { 0 };
+	newd.shallow = 0;
+	newd.w = size;
+	newd.h = size;
+	// 사비값(이미지 형태)을 탑재한다
+	newd.X = load_image_augment_paths( paths	// 자료목록
+								, nn			// 자료개수
+								, min
+								, max
+								, size
+								, angle
+								, aspect
+								, hue
+								, saturation
+								, exposure
+								, center );
+	// 목표값을 탑재한다
+	newd.y = load_labels_paths( paths, nn, labels, kk, hierarchy );
 
-	d.X = load_image_augment_paths( paths
-					, n
-					, min
-					, max
-					, size
-					, angle
-					, aspect
-					, hue
-					, saturation
-					, exposure );
+	if ( mm ) free( paths );
 
-	d.y = load_labels_paths( paths
-					, n
-					, labels
-					, k
-					, hierarchy );
-
-	if ( m ) free( paths );
-	return d;
+	return newd;
 }
 
 data load_data_tag( char **paths
-				, int n
-				, int m
-				, int k
+				, int nn
+				, int mm
+				, int kk
 				, int min
 				, int max
 				, int size
@@ -1133,116 +1968,129 @@ data load_data_tag( char **paths
 				, float saturation
 				, float exposure )
 {
-	if ( m ) paths = get_random_paths( paths, n, m );
+	if ( mm ) paths = get_random_paths( paths, nn, mm );
 
-	data d = { 0 };
-	d.w = size;
-	d.h = size;
-	d.shallow = 0;
+	data newd = { 0 };
+	newd.w = size;
+	newd.h = size;
+	newd.shallow = 0;
+	newd.X = load_image_augment_paths( paths
+								, nn
+								, min
+								, max
+								, size
+								, angle
+								, aspect
+								, hue
+								, saturation
+								, exposure
+								, 0 );
+	newd.y = load_tags_paths( paths, nn, kk );
 
-	d.X = load_image_augment_paths( paths
-		, n
-		, min
-		, max
-		, size
-		, angle
-		, aspect
-		, hue
-		, saturation
-		, exposure );
+	if ( mm ) free( paths );
 
-	d.y = load_tags_paths( paths, n, k );
-
-	if ( m ) free( paths );
-	return d;
+	return newd;
 }
-
+// 두 행렬을 엮는다
 matrix concat_matrix( matrix m1, matrix m2 )
 {
-	int i, count = 0;
-	matrix m;
-	m.cols = m1.cols;
-	m.rows = m1.rows+m2.rows;
-	m.vals = calloc( m1.rows + m2.rows, sizeof( float* ) );
-	for ( i = 0; i < m1.rows; ++i )
+	int ii, count = 0;
+	matrix newm;
+	newm.cols = m1.cols;
+	newm.rows = m1.rows+m2.rows;
+	newm.vals = calloc( m1.rows + m2.rows, sizeof( float* ) );	// 엮을자료 크기만큼 새 행렬 메모리 할당
+	// 새 행렬에 m1 값을 담는다
+	for ( ii=0; ii < m1.rows; ++ii )
 	{
-		m.vals[count++] = m1.vals[i];
+		newm.vals[count++] = m1.vals[ii];
 	}
-	for ( i = 0; i < m2.rows; ++i )
+	// 새 행렬에 m2 값을 추가로 담는다
+	for ( ii=0; ii < m2.rows; ++ii )
 	{
-		m.vals[count++] = m2.vals[i];
+		newm.vals[count++] = m2.vals[ii];
 	}
-	return m;
-}
 
+	return newm;
+}
+// 두 자료를 엮는다
 data concat_data( data d1, data d2 )
 {
-	data d = { 0 };
-	d.shallow = 1;
-	d.X = concat_matrix( d1.X, d2.X );
-	d.y = concat_matrix( d1.y, d2.y );
-	return d;
+	data newd = { 0 };
+	newd.shallow = 1;
+	newd.X = concat_matrix( d1.X, d2.X );	// 입력값을 엮는다
+	newd.y = concat_matrix( d1.y, d2.y );	// 목표값을 엮는다
+	newd.w = d1.w;
+	newd.h = d1.h;
+	return newd;
 }
-
-data concat_datas( data *d, int n )
+// 자료를 지정한 개수만큼 엮는다
+data concat_datas( data *dd, int nn )
 {
-	int i;
-	data out = { 0 };
-	for ( i = 0; i < n; ++i )
+	int ii;
+	data outd = { 0 };
+
+	for ( ii=0; ii < nn; ++ii )
 	{
-		data new = concat_data( d[i], out );
-		free_data( out );
-		out = new;
+		data newd = concat_data( dd[ii], outd );	// 쓰레드개수만큼 자료를 엮는다
+		free_data( outd );
+		outd = newd;
 	}
-	return out;
+
+	return outd;
 }
 
-data load_categorical_data_csv( char *filename, int target, int k )
+data load_categorical_data_csv( char *filename, int target, int kk )
 {
-	data d = { 0 };
-	d.shallow = 0;
-	matrix X = csv_to_matrix( filename );
-	float *truth_1d = pop_column( &X, target );
-	float **truth = one_hot_encode( truth_1d, X.rows, k );
-	matrix y;
-	y.rows = X.rows;
-	y.cols = k;
-	y.vals = truth;
-	d.X = X;
-	d.y = y;
+	data newd		= { 0 };
+	newd.shallow	= 0;
+	matrix XX		= csv_to_matrix( filename );
+	float *truth_1d	= pop_column( &XX, target );
+	float **truth	= one_hot_encode( truth_1d, XX.rows, kk );
+	matrix YY;
+	YY.rows	= XX.rows;
+	YY.cols	= kk;
+	YY.vals	= truth;
+	newd.X	= XX;
+	newd.y	= YY;
+
 	free( truth_1d );
-	return d;
+
+	return newd;
 }
 
 data load_cifar10_data( char *filename )
 {
-	data d = { 0 };
-	d.shallow = 0;
-	long i, j;
-	matrix X = make_matrix( 10000, 3072 );
-	matrix y = make_matrix( 10000, 10 );
-	d.X = X;
-	d.y = y;
+	long ii, jj;
+
+	data newd		= { 0 };
+	newd.shallow	= 0;
+	matrix XX		= make_matrix( 10000, 3072 );
+	matrix YY		= make_matrix( 10000, 10 );
+	newd.X			= XX;
+	newd.y			= YY;
 
 	//FILE *fp = fopen( filename, "rb" );
 	FILE *fp; fopen_s( &fp, filename, "rb" );
+
 	if ( !fp ) file_error( filename );
-	for ( i = 0; i < 10000; ++i )
+
+	for ( ii=0; ii < 10000; ++ii )
 	{
 		unsigned char bytes[3073];
 		fread( bytes, 1, 3073, fp );
 		int class = bytes[0];
-		y.vals[i][class] = 1;
-		for ( j = 0; j < X.cols; ++j )
+		YY.vals[ii][class] = 1;
+
+		for ( jj=0; jj < XX.cols; ++jj )
 		{
-			X.vals[i][j] = (double)bytes[j+1];
+			XX.vals[ii][jj] = (float)bytes[jj+1];
 		}
 	}
-	//translate_data_rows(d, -128);
-	scale_data_rows( d, 1./255 );
+
+	scale_data_rows( newd, 1.0f/255 );
 	//normalize_data_rows(d);
 	fclose( fp );
-	return d;
+	return newd;
 }
 
 void get_random_batch( data d, int n, float *X, float *y )
@@ -1250,28 +2098,31 @@ void get_random_batch( data d, int n, float *X, float *y )
 	int j;
 	for ( j = 0; j < n; ++j )
 	{
-		int index = random_gen()%d.X.rows;
+		int index = rand()%d.X.rows;
 		memcpy( X+j*d.X.cols, d.X.vals[index], d.X.cols*sizeof( float ) );
 		memcpy( y+j*d.y.cols, d.y.vals[index], d.y.cols*sizeof( float ) );
 	}
 }
-
-void get_next_batch( data d, int n, int offset, float *X, float *y )
+// 신경망에 사비값을 전달하기 위해 한동이에 해당하는 사리수만큼 자료를 복사사한다
+void get_next_batch( data d, int nn, int offset, float *X, float *y )
 {
-	int j;
-	for ( j = 0; j < n; ++j )
+	int jj;
+	for ( jj=0; jj < nn; ++jj )
 	{
-		int index = offset + j;
-		memcpy( X+j*d.X.cols, d.X.vals[index], d.X.cols*sizeof( float ) );
-		memcpy( y+j*d.y.cols, d.y.vals[index], d.y.cols*sizeof( float ) );
+		int index = offset + jj;
+		// 입력값을 사리수만큼 복사한다
+		memcpy( X+jj*d.X.cols, d.X.vals[index], d.X.cols*sizeof( float ) );
+		// 목표값을 사리수만큼 복사한다
+		if ( y )
+			memcpy( y+jj*d.y.cols, d.y.vals[index], d.y.cols*sizeof( float ) );
 	}
 }
 
 void smooth_data( data d )
 {
 	int i, j;
-	float scale = 1. / d.y.cols;
-	float eps = .1;
+	float scale = 1.0f / d.y.cols;
+	float eps = 0.1f;
 	for ( i = 0; i < d.y.rows; ++i )
 	{
 		for ( j = 0; j < d.y.cols; ++j )
@@ -1283,47 +2134,53 @@ void smooth_data( data d )
 
 data load_all_cifar10()
 {
-	data d = { 0 };
-	d.shallow = 0;
-	int i, j, b;
-	matrix X = make_matrix( 50000, 3072 );
-	matrix y = make_matrix( 50000, 10 );
-	d.X = X;
-	d.y = y;
-
-
-	for ( b = 0; b < 5; ++b )
+	int ii, jj, bb;
+	data newd	= { 0 };
+	newd.shallow = 0;
+	matrix XX	= make_matrix( 50000, 3072 );	// 3072 = 32x32x3 (가로x세로x색)
+	matrix yy	= make_matrix( 50000, 10 );
+	newd.X		= XX;
+	newd.y		= yy;
+	// 5 종의 자료뭉치를 반복한다
+	for ( bb=0; bb < 5; ++bb )
 	{
 		char buff[256];
 		//sprintf( buff, "data/cifar/cifar-10-batches-bin/data_batch_%d.bin", b+1 );
-		sprintf_s( buff, 256, "data/cifar/cifar-10-batches-bin/data_batch_%d.bin", b+1 );
+		sprintf_s( buff, 256, "data/cifar/cifar-10-batches-bin/data_batch_%d.bin", bb+1 );
+
 		//FILE *fp = fopen( buff, "rb" );
 		FILE *fp; fopen_s( &fp, buff, "rb" );
+
 		if ( !fp ) file_error( buff );
-		for ( i = 0; i < 10000; ++i )
+		// 1 종당 10000 개의 자료가 있다
+		for ( ii=0; ii < 10000; ++ii )
 		{
 			unsigned char bytes[3073];
-			fread( bytes, 1, 3073, fp );
-			int class = bytes[0];
-			y.vals[i+b*10000][class] = 1;
-			for ( j = 0; j < X.cols; ++j )
+			fread( bytes, 1, 3073, fp );		// 목표값을 포함한 자료를 읽는다
+
+			int class = bytes[0];				// 목표값 위지
+			yy.vals[ii+bb*10000][class] = 1.0f;	// 목표값 해당위지를 1.0 으로 설정한다
+			// 입력값 자료를 적재한다
+			for ( jj=0; jj < XX.cols; ++jj )
 			{
-				X.vals[i+b*10000][j] = (double)bytes[j+1];
+				XX.vals[ii+bb*10000][jj] = (float)bytes[jj+1];
 			}
 		}
+
 		fclose( fp );
 	}
+
 	//normalize_data_rows(d);
-	//translate_data_rows(d, -128);
-	scale_data_rows( d, 1./255 );
-	smooth_data( d );
-	return d;
+	scale_data_rows( newd, 1.0f/255 );
+	smooth_data( newd );
+	return newd;
 }
 
 data load_go( char *filename )
 {
 	//FILE *fp = fopen( filename, "rb" );
 	FILE *fp; fopen_s( &fp, filename, "rb" );
+
 	matrix X = make_matrix( 3363059, 361 );
 	matrix y = make_matrix( 3363059, 361 );
 	int row, col;
@@ -1331,6 +2188,7 @@ data load_go( char *filename )
 	if ( !fp ) file_error( filename );
 	char *label;
 	int count = 0;
+
 	while ( (label = fgetl( fp )) )
 	{
 		int i;
@@ -1339,6 +2197,7 @@ data load_go( char *filename )
 			X = resize_matrix( X, count*2 );
 			y = resize_matrix( y, count*2 );
 		}
+
 		//sscanf( label, "%d %d", &row, &col );
 		sscanf_s( label, "%d %d", &row, &col );
 		char *board = fgetl( fp );
@@ -1353,10 +2212,12 @@ data load_go( char *filename )
 			else if ( board[i] == '2' ) val = -1;
 			X.vals[count][i] = val;
 		}
+
 		++count;
 		free( label );
 		free( board );
 	}
+
 	X = resize_matrix( X, count );
 	y = resize_matrix( y, count );
 
@@ -1364,7 +2225,6 @@ data load_go( char *filename )
 	d.shallow = 0;
 	d.X = X;
 	d.y = y;
-
 
 	fclose( fp );
 
@@ -1377,7 +2237,7 @@ void randomize_data( data d )
 	int i;
 	for ( i = d.X.rows-1; i > 0; --i )
 	{
-		int index = random_gen()%i;
+		int index = rand()%i;
 		float *swap = d.X.vals[index];
 		d.X.vals[index] = d.X.vals[i];
 		d.X.vals[i] = swap;
@@ -1404,6 +2264,19 @@ void translate_data_rows( data d, float s )
 	{
 		translate_array( d.X.vals[i], d.X.cols, s );
 	}
+}
+
+data copy_data( data d )
+{
+	data c = { 0 };
+	c.w = d.w;
+	c.h = d.h;
+	c.shallow = 0;
+	c.num_boxes = d.num_boxes;
+	c.boxes = d.boxes;
+	c.X = copy_matrix( d.X );
+	c.y = copy_matrix( d.y );
+	return c;
 }
 
 void normalize_data_rows( data d )
@@ -1445,7 +2318,7 @@ data get_random_data( data d, int num )
 	int i;
 	for ( i = 0; i < num; ++i )
 	{
-		int index = random_gen()%d.X.rows;
+		int index = rand()%d.X.rows;
 		r.X.vals[i] = d.X.vals[index];
 		r.y.vals[i] = d.y.vals[index];
 	}
@@ -1467,28 +2340,32 @@ data *split_data( data d, int part, int total )
 	train.X.cols = test.X.cols = d.X.cols;
 	train.y.cols = test.y.cols = d.y.cols;
 
-	train.X.vals = calloc( train.X.rows, sizeof( float* ) );
-	test.X.vals = calloc( test.X.rows, sizeof( float* ) );
-	train.y.vals = calloc( train.y.rows, sizeof( float* ) );
-	test.y.vals = calloc( test.y.rows, sizeof( float* ) );
+	train.X.vals	= calloc( train.X.rows, sizeof( float* ) );
+	test.X.vals		= calloc( test.X.rows, sizeof( float* ) );
+	train.y.vals	= calloc( train.y.rows, sizeof( float* ) );
+	test.y.vals		= calloc( test.y.rows, sizeof( float* ) );
 
 	for ( i = 0; i < start; ++i )
 	{
 		train.X.vals[i] = d.X.vals[i];
 		train.y.vals[i] = d.y.vals[i];
 	}
+
 	for ( i = start; i < end; ++i )
 	{
 		test.X.vals[i-start] = d.X.vals[i];
 		test.y.vals[i-start] = d.y.vals[i];
 	}
+
 	for ( i = end; i < d.X.rows; ++i )
 	{
 		train.X.vals[i-(end-start)] = d.X.vals[i];
 		train.y.vals[i-(end-start)] = d.y.vals[i];
 	}
+
 	split[0] = train;
 	split[1] = test;
+
 	return split;
 }
 

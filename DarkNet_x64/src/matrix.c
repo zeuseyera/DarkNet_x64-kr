@@ -1,5 +1,6 @@
 #include "matrix.h"
-#include "./utils.h"
+#include "utils.h"
+#include "blas.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,6 +86,21 @@ void matrix_add_matrix( matrix from, matrix to )
 	}
 }
 
+matrix copy_matrix( matrix m )
+{
+	matrix c = { 0 };
+	c.rows = m.rows;
+	c.cols = m.cols;
+	c.vals = calloc( c.rows, sizeof( float * ) );
+	int i;
+	for ( i = 0; i < c.rows; ++i )
+	{
+		c.vals[i] = calloc( c.cols, sizeof( float ) );
+		copy_cpu( c.cols, m.vals[i], 1, c.vals[i], 1 );
+	}
+	return c;
+}
+// 행렬 메모리를 할당한다
 matrix make_matrix( int rows, int cols )
 {
 	int i;
@@ -147,9 +163,7 @@ matrix csv_to_matrix( char *filename )
 	m.vals = calloc( size, sizeof( float* ) );
 	while ( (line = fgetl( fp )) )
 	{
-		if ( m.cols == -1 )
-			m.cols = count_fields( line );
-
+		if ( m.cols == -1 ) m.cols = count_fields( line );
 		if ( n == size )
 		{
 			size *= 2;

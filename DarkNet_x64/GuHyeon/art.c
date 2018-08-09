@@ -1,44 +1,19 @@
-癤�
-#include "./art.h"
+
+#include "darknet.h"
 /*
-#include "../Net/network.h"
-#include "../Util/utils.h"
-#include "../Net/parser.h"
-#include "../Net/option_list.h"
-#include "../Net/blas.h"
-#include "./classifier.h"
-
 #ifdef WIN32
-#include <time.h>
-#include <winsock.h>
-#include "../Util/gettimeofday.h"
-
+#include <time.h>		// 윈도우 환경 [7/4/2018 jobs]
 #else
-#include <sys/time.h>
-
-#endif
-
-#ifdef OPENCV
-#include "opencv2/highgui/highgui_c.h"
-#include "opencv2/core/version.hpp"
-
-#ifndef CV_VERSION_EPOCH
-//#include "opencv2/videoio/videoio_c.h"
-
+#include <sys/time.h>	// 유닉스 환경 [7/4/2018 jobs]
 #endif
 */
-image get_image_from_stream( CvCapture *cap );
-//#endif
+#include "gettimeofday.h"	//  [7/4/2018 jobs]
 
 void demo_art( char *cfgfile, char *weightfile, int cam_index )
 {
 	#ifdef OPENCV
-	network net = parse_network_cfg( cfgfile );
-	if ( weightfile )
-	{
-		load_weights( &net, weightfile );
-	}
-	set_batch_network( &net, 1 );
+	network *net = load_network( cfgfile, weightfile, 0 );
+	set_batch_network( net, 1 );
 
 	srand( 2222222 );
 	CvCapture * cap;
@@ -47,6 +22,7 @@ void demo_art( char *cfgfile, char *weightfile, int cam_index )
 
 	char *window = "ArtJudgementBot9000!!!";
 	if ( !cap ) error( "Couldn't connect to webcam.\n" );
+
 	cvNamedWindow( window, CV_WINDOW_NORMAL );
 	cvResizeWindow( window, 512, 512 );
 	int i;
@@ -56,7 +32,7 @@ void demo_art( char *cfgfile, char *weightfile, int cam_index )
 	while ( 1 )
 	{
 		image in = get_image_from_stream( cap );
-		image in_s = resize_image( in, net.w, net.h );
+		image in_s = resize_image( in, net->w, net->h );
 		show_image( in, window );
 
 		float *p = network_predict( net, in_s.data );
@@ -70,10 +46,12 @@ void demo_art( char *cfgfile, char *weightfile, int cam_index )
 			float s = p[idx[i]];
 			if ( s > score ) score = s;
 		}
+
 		score = score;
 		printf( "I APPRECIATE THIS ARTWORK: %10.7f%%\n", score*100 );
 		printf( "[" );
 		int upper = 30;
+
 		for ( i = 0; i < upper; ++i )
 		{
 			printf( "%c", ((i+.5) < score*upper) ? 219 : ' ' );

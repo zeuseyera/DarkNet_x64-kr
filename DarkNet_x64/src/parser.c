@@ -1,14 +1,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "layer_activation.h"
+#include "layer_logistic.h"
+#include "layer_l2norm.h"
 #include "activations.h"
-#include "assert.h"
 #include "layer_avgpool.h"
 #include "layer_batchnorm.h"
 #include "blas.h"
 #include "layer_connected.h"
+#include "layer_deconvolutional.h"
 #include "layer_convolutional.h"
 #include "layer_cost.h"
 #include "layer_crnn.h"
@@ -23,52 +26,63 @@
 #include "option_list.h"
 #include "parser.h"
 #include "layer_region.h"
+#include "layer_yolo.h"
 #include "layer_reorg.h"
 #include "layer_rnn.h"
 #include "layer_route.h"
+#include "layer_upsample.h"
 #include "layer_shortcut.h"
 #include "layer_softmax.h"
+#include "layer_lstm.h"
 #include "utils.h"
-#include <stdint.h>
 
 typedef struct
 {
-	char *type;
-	list *options;
-} section;
+	char *type;		// 토막(부문)이름
+	list *options;	// 선택사항 목록
+} section;	// 토막
 
 list *read_cfg( char *filename );
-// 단 유형을 반환
+
 LAYER_TYPE string_to_layer_type( char * type )
 {
-	if ( strcmp( type, "[shortcut]" )==0 )		return SHORTCUT;
-	if ( strcmp( type, "[crop]" )==0 )			return CROP;
-	if ( strcmp( type, "[cost]" )==0 )			return COST;
-	if ( strcmp( type, "[detection]" )==0 )		return DETECTION;
-	if ( strcmp( type, "[region]" )==0 )		return REGION;
-	if ( strcmp( type, "[local]" )==0 )			return LOCAL;
+
+	if ( strcmp( type, "[shortcut]" )==0 )			return SHORTCUT;
+	if ( strcmp( type, "[crop]" )==0 )				return CROP;
+	if ( strcmp( type, "[cost]" )==0 )				return COST;
+	if ( strcmp( type, "[detection]" )==0 )			return DETECTION;
+	if ( strcmp( type, "[region]" )==0 )			return REGION;
+	if ( strcmp( type, "[yolo]" )==0 )				return YOLO;
+	if ( strcmp( type, "[local]" )==0 )				return LOCAL;
 	if ( strcmp( type, "[conv]" )==0 ||
-		strcmp( type, "[convolutional]" )==0 )	return CONVOLUTIONAL;
-	if ( strcmp( type, "[activation]" )==0 )	return ACTIVE;
+		 strcmp( type, "[convolutional]" )==0 )		return CONVOLUTIONAL;
+	if ( strcmp( type, "[deconv]" )==0 ||
+		 strcmp( type, "[deconvolutional]" )==0 )	return DECONVOLUTIONAL;
+	if ( strcmp( type, "[activation]" )==0 )		return ACTIVE;
+	if ( strcmp( type, "[logistic]" )==0 )			return LOGXENT;
+	if ( strcmp( type, "[l2norm]" )==0 )			return L2NORM;
 	if ( strcmp( type, "[net]" )==0 ||
-		strcmp( type, "[network]" )==0 )		return NETWORK;
-	if ( strcmp( type, "[crnn]" )==0 )			return CRNN;
-	if ( strcmp( type, "[gru]" )==0 )			return GRU;
-	if ( strcmp( type, "[rnn]" )==0 )			return RNN;
+		 strcmp( type, "[network]" )==0 )			return NETWORK;
+	if ( strcmp( type, "[crnn]" )==0 )				return CRNN;
+	if ( strcmp( type, "[gru]" )==0 )				return GRU;
+	if ( strcmp( type, "[lstm]" ) == 0 )			return LSTM;
+	if ( strcmp( type, "[rnn]" )==0 )				return RNN;
 	if ( strcmp( type, "[conn]" )==0 ||
-		strcmp( type, "[connected]" )==0 )		return CONNECTED;
+		 strcmp( type, "[connected]" )==0 )			return CONNECTED;
 	if ( strcmp( type, "[max]" )==0 ||
-		strcmp( type, "[maxpool]" )==0 )		return MAXPOOL;
-	if ( strcmp( type, "[reorg]" )==0 )			return REORG;
+		 strcmp( type, "[maxpool]" )==0 )			return MAXPOOL;
+	if ( strcmp( type, "[reorg]" )==0 )				return REORG;
 	if ( strcmp( type, "[avg]" )==0 ||
-		strcmp( type, "[avgpool]" )==0 )		return AVGPOOL;
-	if ( strcmp( type, "[dropout]" )==0 )		return DROPOUT;
+		 strcmp( type, "[avgpool]" )==0 )			return AVGPOOL;
+	if ( strcmp( type, "[dropout]" )==0 )			return DROPOUT;
 	if ( strcmp( type, "[lrn]" )==0 ||
-		strcmp( type, "[normalization]" )==0 )	return NORMALIZATION;
-	if ( strcmp( type, "[batchnorm]" )==0 )		return BATCHNORM;
+		 strcmp( type, "[normalization]" )==0 )		return NORMALIZATION;
+	if ( strcmp( type, "[batchnorm]" )==0 )			return BATCHNORM;
 	if ( strcmp( type, "[soft]" )==0 ||
-		strcmp( type, "[softmax]" )==0 )		return SOFTMAX;
-	if ( strcmp( type, "[route]" )==0 )			return ROUTE;
+		 strcmp( type, "[softmax]" )==0 )			return SOFTMAX;
+	if ( strcmp( type, "[route]" )==0 )				return ROUTE;
+	if ( strcmp( type, "[upsample]" )==0 )			return UPSAMPLE;
+
 	return BLANK;
 }
 
@@ -93,42 +107,42 @@ void free_section( section *s )
 
 void parse_data( char *data, float *a, int n )
 {
-	int i;
 	if ( !data ) return;
+
 	char *curr = data;
 	char *next = data;
 	int done = 0;
 
-	for ( i = 0; i < n && !done; ++i )
+	int ii;
+	for ( ii=0; ii < n && !done; ++ii )
 	{
 		while ( *++next !='\0' && *next != ',' );
-
 		if ( *next == '\0' ) done = 1;
 		*next = '\0';
 		//sscanf( curr, "%g", &a[i] );
-		sscanf_s( curr, "%g", &a[i] );
+		sscanf_s( curr, "%g", &a[ii] );
 		curr = next+1;
 	}
 }
 
 typedef struct size_params
 {
-	int batch;	// 사리수
-	int inputs;	// 입력개수(가로x세로x판수)
-	int h;		// 세로크기
-	int w;		// 가로크기
-	int c;		// 채널(판수)
-	int index;	// 단 순번
+	int batch;
+	int inputs;
+	int h;
+	int w;
+	int c;
+	int index;		// 현재단 순번
 	int time_steps;
-	network net;
+	network *net;
 } size_params;
 
 local_layer parse_local( list *options, size_params params )
 {
-	int n		= option_find_int( options, "filters", 1 );	// 포집(커널) 개수(출력개수)
-	int size	= option_find_int( options, "size", 1 );	// 포집(커널) 가로세로 크기
-	int stride	= option_find_int( options, "stride", 1 );	// 포집 보
-	int pad		= option_find_int( options, "pad", 0 );		// 패딩
+	int n		= option_find_int( options, "filters", 1 );
+	int size	= option_find_int( options, "size", 1 );
+	int stride	= option_find_int( options, "stride", 1 );
+	int pad		= option_find_int( options, "pad", 0 );
 	char *activation_s		= option_find_str( options, "activation", "logistic" );
 	ACTIVATION activation	= get_activation( activation_s );
 
@@ -136,25 +150,57 @@ local_layer parse_local( list *options, size_params params )
 	h = params.h;
 	w = params.w;
 	c = params.c;
-	batch = params.batch;
+	batch=params.batch;
 
 	if ( !(h && w && c) )
-		//error( "Layer before local layer must output image." );
-		error( "국소층의 전방층은 반드시 이미지를 출력해야 한다." );
+	//	error( "Layer before local layer must output image." );	//  [7/6/2018 jobs]
+		error( "local층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
 
-	local_layer layer = make_local_layer( batch
+	local_layer Lyr = make_local_layer( batch, h, w, c, n, size, stride, pad, activation );
+
+	return Lyr;
+}
+
+layer parse_deconvolutional( list *options, size_params params )
+{
+	int n		= option_find_int( options, "filters", 1 );
+	int size	= option_find_int( options, "size", 1 );
+	int stride	= option_find_int( options, "stride", 1 );
+
+	char *activation_s		= option_find_str( options, "activation", "logistic" );
+	ACTIVATION activation	= get_activation( activation_s );
+
+	int batch, h, w, c;
+	h = params.h;
+	w = params.w;
+	c = params.c;
+	batch=params.batch;
+
+	if ( !(h && w && c) )
+	//	error( "Layer before deconvolutional layer must output image." );	//  [7/6/2018 jobs]
+		error( "deconvolutional층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
+
+	int batch_normalize	= option_find_int_quiet( options, "batch_normalize", 0 );
+	int pad				= option_find_int_quiet( options, "pad", 0 );
+	int padding			= option_find_int_quiet( options, "padding", 0 );
+	if ( pad ) padding = size/2;
+
+	layer Lyr = make_deconvolutional_layer( batch
 										, h
 										, w
 										, c
 										, n
 										, size
 										, stride
-										, pad
-										, activation );
+										, padding
+										, activation
+										, batch_normalize
+										, params.net->adam );
 
-	return layer;
+	return Lyr;
 }
-// 나선신경망(Covolutional Neural Network)
+
+
 convolutional_layer parse_convolutional( list *options, size_params params )
 {
 	int n		= option_find_int( options, "filters", 1 );
@@ -162,6 +208,7 @@ convolutional_layer parse_convolutional( list *options, size_params params )
 	int stride	= option_find_int( options, "stride", 1 );
 	int pad		= option_find_int_quiet( options, "pad", 0 );
 	int padding	= option_find_int_quiet( options, "padding", 0 );
+	int groups	= option_find_int_quiet( options, "groups", 1 );
 	if ( pad ) padding = size/2;
 
 	char *activation_s		= option_find_str( options, "activation", "logistic" );
@@ -174,48 +221,40 @@ convolutional_layer parse_convolutional( list *options, size_params params )
 	batch=params.batch;
 
 	if ( !(h && w && c) )
-		//error( "Layer before convolutional layer must output image." );
-		error( "나선층의 전방층은 반드시 이미지를 출력해야 한다." );
+	//	error( "Layer before convolutional layer must output image." );	//  [7/6/2018 jobs]
+		error( "convolutional층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
 
 	int batch_normalize	= option_find_int_quiet( options, "batch_normalize", 0 );
 	int binary			= option_find_int_quiet( options, "binary", 0 );
 	int xnor			= option_find_int_quiet( options, "xnor", 0 );
 
-	convolutional_layer layer = 
-		make_convolutional_layer( batch
-								, h
-								, w
-								, c
-								, n
-								, size
-								, stride
-								, padding
-								, activation
-								, batch_normalize
-								, binary
-								, xnor
-								, params.net.adam );
+	convolutional_layer Lyr	= make_convolutional_layer( batch
+														, h
+														, w
+														, c
+														, n
+														, groups
+														, size
+														, stride
+														, padding
+														, activation
+														, batch_normalize
+														, binary
+														, xnor
+														, params.net->adam );
+	Lyr.flipped	= option_find_int_quiet( options, "flipped", 0 );
+	Lyr.dot		= option_find_float_quiet( options, "dot", 0 );
 
-	layer.flipped	= option_find_int_quiet( options, "flipped", 0 );
-	layer.dot		= option_find_float_quiet( options, "dot", 0 );
-
-	if ( params.net.adam )
-	{
-		layer.B1 = params.net.B1;
-		layer.B2 = params.net.B2;
-		layer.eps = params.net.eps;
-	}
-
-	return layer;
+	return Lyr;
 }
-// 나선재사용신경망(Covolutional Recurrent Neural Network)
+
 layer parse_crnn( list *options, size_params params )
 {
-	int output_filters = option_find_int( options, "output_filters", 1 );
-	int hidden_filters = option_find_int( options, "hidden_filters", 1 );
-	char *activation_s = option_find_str( options, "activation", "logistic" );
-	ACTIVATION activation = get_activation( activation_s );
-	int batch_normalize = option_find_int_quiet( options, "batch_normalize", 0 );
+	int output_filters	= option_find_int( options, "output_filters", 1 );
+	int hidden_filters	= option_find_int( options, "hidden_filters", 1 );
+	char *activation_s	= option_find_str( options, "activation", "logistic" );
+	ACTIVATION activation	= get_activation( activation_s );
+	int batch_normalize	= option_find_int_quiet( options, "batch_normalize", 0 );
 
 	layer l = make_crnn_layer( params.batch
 							, params.w
@@ -231,108 +270,203 @@ layer parse_crnn( list *options, size_params params )
 
 	return l;
 }
-// 재사용신경망(Recurrent Neural Network)
+
 layer parse_rnn( list *options, size_params params )
 {
-	int output				= option_find_int( options, "output", 1 );
-	int hidden				= option_find_int( options, "hidden", 1 );
-	char *activation_s		= option_find_str( options, "activation", "logistic" );
+	int output			= option_find_int( options, "output", 1 );
+	char *activation_s	= option_find_str( options, "activation", "logistic" );
 	ACTIVATION activation	= get_activation( activation_s );
-	int batch_normalize		= option_find_int_quiet( options, "batch_normalize", 0 );
-	int logistic			= option_find_int_quiet( options, "logistic", 0 );
+	int batch_normalize = option_find_int_quiet( options, "batch_normalize", 0 );
 
-	layer l = make_rnn_layer( params.batch
+	layer Lyr = make_rnn_layer( params.batch
 							, params.inputs
-							, hidden
 							, output
 							, params.time_steps
-							, activation
-							, batch_normalize
-							, logistic );
+							, activation, batch_normalize
+							, params.net->adam );
 
-	l.shortcut = option_find_int_quiet( options, "shortcut", 0 );
+	Lyr.shortcut = option_find_int_quiet( options, "shortcut", 0 );
 
-	return l;
+	return Lyr;
 }
-// 문달린 재사용 장치(Gated Recurrent Unit)
+
 layer parse_gru( list *options, size_params params )
 {
 	int output = option_find_int( options, "output", 1 );
 	int batch_normalize = option_find_int_quiet( options, "batch_normalize", 0 );
 
-	layer l = make_gru_layer( params.batch
+	layer Lyr = make_gru_layer( params.batch
 							, params.inputs
 							, output
 							, params.time_steps
-							, batch_normalize );
+							, batch_normalize
+							, params.net->adam );
+	Lyr.tanh = option_find_int_quiet( options, "tanh", 0 );
 
-	return l;
+	return Lyr;
 }
 
-connected_layer parse_connected( list *options, size_params params )
+layer parse_lstm( list *options, size_params params )
 {
-	int output				= option_find_int( options, "output", 1 );
-	char *activation_s		= option_find_str( options, "activation", "logistic" );
+	int output = option_find_int( options, "output", 1 );
+	int batch_normalize = option_find_int_quiet( options, "batch_normalize", 0 );
+
+	layer Lyr = make_lstm_layer( params.batch
+							, params.inputs
+							, output
+							, params.time_steps
+							, batch_normalize
+							, params.net->adam );
+
+	return Lyr;
+}
+
+layer parse_connected( list *options, size_params params )
+{
+	int output			= option_find_int( options, "output", 1 );
+	char *activation_s	= option_find_str( options, "activation", "logistic" );
 	ACTIVATION activation	= get_activation( activation_s );
-	int batch_normalize		= option_find_int_quiet( options, "batch_normalize", 0 );
+	int batch_normalize = option_find_int_quiet( options, "batch_normalize", 0 );
 
-	connected_layer layer = make_connected_layer( params.batch
-												, params.inputs
-												, output
-												, activation
-												, batch_normalize );
-
-	return layer;
+	layer l = make_connected_layer( params.batch
+								, params.inputs
+								, output
+								, activation
+								, batch_normalize
+								, params.net->adam );
+	return l;
 }
 
 softmax_layer parse_softmax( list *options, size_params params )
 {
-	int groups = option_find_int_quiet( options, "groups", 1 );
-	softmax_layer layer = make_softmax_layer( params.batch, params.inputs, groups );
-	layer.temperature = option_find_float_quiet( options, "temperature", 1 );
-	char *tree_file = option_find_str( options, "tree", 0 );
-	if ( tree_file ) layer.softmax_tree = read_tree( tree_file );
-	return layer;
+	int groups			= option_find_int_quiet( options, "groups", 1 );
+	softmax_layer Lyr	= make_softmax_layer( params.batch, params.inputs, groups );
+	Lyr.temperature		= option_find_float_quiet( options, "temperature", 1 );
+	char *tree_file		= option_find_str( options, "tree", 0 );
+
+	if ( tree_file ) Lyr.softmax_tree = read_tree( tree_file );
+
+	Lyr.w = params.w;
+	Lyr.h = params.h;
+	Lyr.c = params.c;
+	Lyr.spatial = option_find_float_quiet( options, "spatial", 0 );
+
+	return Lyr;
+}
+// 욜로 마스크 문장분석
+int *parse_yolo_mask( char *aa, int *num )
+{
+	int *mask = 0;
+	if ( aa )
+	{
+		int len = strlen( aa );
+		int nn = 1;
+		int ii;
+
+		for ( ii=0; ii < len; ++ii )
+		{
+			if ( aa[ii] == ',' ) ++nn;
+		}
+
+		mask = calloc( nn, sizeof( int ) );
+
+		for ( ii=0; ii < nn; ++ii )
+		{
+			int val = atoi( aa );
+			mask[ii] = val;
+			aa = strchr( aa, ',' )+1;
+		}
+
+		*num = nn;
+	}
+
+	return mask;
+}
+// 욜로 문장분석
+layer parse_yolo( list *options, size_params params )
+{
+	int classes	= option_find_int( options, "classes", 20 );// 분류개수(COCO: 80개, VOC: 20개)
+	int total	= option_find_int( options, "num", 1 );		// 6개(앵커 쌍 개수???)
+	int num		= total;									// 마스크 개수(3개: 3,4,5	또는 1,2,3)
+	// mask = 3,4,5	또는 mask = 1,2,3
+	char *msk	= option_find_str( options, "mask", 0 );	// 마스크 값 문자열
+	int *mask	= parse_yolo_mask( msk, &num );				// 마스크 값(3개: 3,4,5	또는 1,2,3)
+	layer Lyr	= make_yolo_layer( params.batch, params.w, params.h, num, total, mask, classes );
+	assert( Lyr.outputs == params.inputs );
+
+	Lyr.max_boxes = option_find_int_quiet( options, "max", 90 );	// 상자 최대개수
+	Lyr.jitter		= option_find_float( options, "jitter", 0.2f );	// 조금씩 움직이는 비율
+
+	Lyr.ignore_thresh	= option_find_float( options, "ignore_thresh", 0.5f );	// 무시 문턱값
+	Lyr.truth_thresh	= option_find_float( options, "truth_thresh", 1 );		// 목표(신뢰) 문턱값
+	Lyr.random		= option_find_int_quiet( options, "random", 0 );
+
+	char *map_file	= option_find_str( options, "map", 0 );
+
+	if ( map_file )
+		Lyr.map = read_map( map_file );
+
+	// anchors = 10,14,  23,27,  37,58,  81,82,  135,169,  344,319
+	char *anc = option_find_str( options, "anchors", 0 );
+
+	if ( anc )
+	{
+		int len = strlen( anc );
+		int nn = 1;
+		int ii;
+
+		for ( ii=0; ii < len; ++ii )
+		{
+			if ( anc[ii] == ',' ) ++nn;
+		}
+
+		for ( ii=0; ii < nn; ++ii )
+		{
+			float bias		= atof( anc );
+			Lyr.biases[ii]	= bias;
+			anc				= strchr( anc, ',' )+1;
+		}
+	}
+
+	return Lyr;
 }
 
 layer parse_region( list *options, size_params params )
 {
-	int coords = option_find_int( options, "coords", 4 );
-	int classes = option_find_int( options, "classes", 20 );
-	int num = option_find_int( options, "num", 1 );
+	int coords	= option_find_int( options, "coords", 4 );
+	int classes	= option_find_int( options, "classes", 20 );
+	int num		= option_find_int( options, "num", 1 );
 
-	layer l = make_region_layer( params.batch
-								, params.w
-								, params.h
-								, num
-								, classes
-								, coords );
+	layer Lyr = make_region_layer( params.batch, params.w, params.h, num, classes, coords );
+	assert( Lyr.outputs == params.inputs );
 
-	assert( l.outputs == params.inputs );
+	Lyr.log		= option_find_int_quiet( options, "log", 0 );
+	Lyr.sqrt	= option_find_int_quiet( options, "sqrt", 0 );
 
-	l.log = option_find_int_quiet( options, "log", 0 );
-	l.sqrt = option_find_int_quiet( options, "sqrt", 0 );
+	Lyr.softmax		= option_find_int( options, "softmax", 0 );
+	Lyr.background	= option_find_int_quiet( options, "background", 0 );
+	Lyr.max_boxes	= option_find_int_quiet( options, "max", 30 );
+	Lyr.jitter		= option_find_float( options, "jitter", 0.2f );
+	Lyr.rescore		= option_find_int_quiet( options, "rescore", 0 );
 
-	l.softmax = option_find_int( options, "softmax", 0 );
-	l.max_boxes = option_find_int_quiet( options, "max", 30 );
-	l.jitter = option_find_float( options, "jitter", .2 );
-	l.rescore = option_find_int_quiet( options, "rescore", 0 );
+	Lyr.thresh		= option_find_float( options, "thresh", 0.5f );
+	Lyr.classfix	= option_find_int_quiet( options, "classfix", 0 );
+	Lyr.absolute	= option_find_int_quiet( options, "absolute", 0 );
+	Lyr.random		= option_find_int_quiet( options, "random", 0 );
 
-	l.thresh = option_find_float( options, "thresh", .5 );
-	l.classfix = option_find_int_quiet( options, "classfix", 0 );
-	l.absolute = option_find_int_quiet( options, "absolute", 0 );
-	l.random = option_find_int_quiet( options, "random", 0 );
+	Lyr.coord_scale		= option_find_float( options, "coord_scale", 1 );
+	Lyr.object_scale	= option_find_float( options, "object_scale", 1 );
+	Lyr.noobject_scale	= option_find_float( options, "noobject_scale", 1 );
+	Lyr.mask_scale		= option_find_float( options, "mask_scale", 1 );
+	Lyr.class_scale		= option_find_float( options, "class_scale", 1 );
+	Lyr.bias_match		= option_find_int_quiet( options, "bias_match", 0 );
 
-	l.coord_scale = option_find_float( options, "coord_scale", 1 );
-	l.object_scale = option_find_float( options, "object_scale", 1 );
-	l.noobject_scale = option_find_float( options, "noobject_scale", 1 );
-	l.class_scale = option_find_float( options, "class_scale", 1 );
-	l.bias_match = option_find_int_quiet( options, "bias_match", 0 );
-
-	char *tree_file = option_find_str( options, "tree", 0 );
-	if ( tree_file ) l.softmax_tree = read_tree( tree_file );
-	char *map_file = option_find_str( options, "map", 0 );
-	if ( map_file ) l.map = read_map( map_file );
+	char *tree_file		= option_find_str( options, "tree", 0 );
+	if ( tree_file )
+		Lyr.softmax_tree	= read_tree( tree_file );
+	char *map_file		= option_find_str( options, "map", 0 );
+	if ( map_file )
+		Lyr.map			= read_map( map_file );
 
 	char *a = option_find_str( options, "anchors", 0 );
 	if ( a )
@@ -347,22 +481,22 @@ layer parse_region( list *options, size_params params )
 		for ( i = 0; i < n; ++i )
 		{
 			float bias = atof( a );
-			l.biases[i] = bias;
+			Lyr.biases[i] = bias;
 			a = strchr( a, ',' )+1;
 		}
 	}
-	return l;
+	return Lyr;
 }
 
 detection_layer parse_detection( list *options, size_params params )
 {
-	int coords = option_find_int( options, "coords", 1 );
-	int classes = option_find_int( options, "classes", 1 );
-	int rescore = option_find_int( options, "rescore", 0 );
-	int num = option_find_int( options, "num", 1 );
-	int side = option_find_int( options, "side", 7 );
+	int coords	= option_find_int( options, "coords", 1 );
+	int classes	= option_find_int( options, "classes", 1 );
+	int rescore	= option_find_int( options, "rescore", 0 );
+	int num		= option_find_int( options, "num", 1 );
+	int side	= option_find_int( options, "side", 7 );
 
-	detection_layer layer = make_detection_layer( params.batch
+	detection_layer Lyr = make_detection_layer( params.batch
 												, params.inputs
 												, num
 												, side
@@ -370,50 +504,57 @@ detection_layer parse_detection( list *options, size_params params )
 												, coords
 												, rescore );
 
-	layer.softmax = option_find_int( options, "softmax", 0 );
-	layer.sqrt = option_find_int( options, "sqrt", 0 );
+	Lyr.softmax			= option_find_int( options, "softmax", 0 );
+	Lyr.sqrt			= option_find_int( options, "sqrt", 0 );
 
-	layer.max_boxes = option_find_int_quiet( options, "max", 30 );
-	layer.coord_scale = option_find_float( options, "coord_scale", 1 );
-	layer.forced = option_find_int( options, "forced", 0 );
-	layer.object_scale = option_find_float( options, "object_scale", 1 );
-	layer.noobject_scale = option_find_float( options, "noobject_scale", 1 );
-	layer.class_scale = option_find_float( options, "class_scale", 1 );
-	layer.jitter = option_find_float( options, "jitter", .2 );
-	layer.random = option_find_int_quiet( options, "random", 0 );
-	layer.reorg = option_find_int_quiet( options, "reorg", 0 );
-	return layer;
+	Lyr.max_boxes		= option_find_int_quiet( options, "max", 90 );
+	Lyr.coord_scale		= option_find_float( options, "coord_scale", 1 );
+	Lyr.forced			= option_find_int( options, "forced", 0 );
+	Lyr.object_scale	= option_find_float( options, "object_scale", 1 );
+	Lyr.noobject_scale	= option_find_float( options, "noobject_scale", 1 );
+	Lyr.class_scale		= option_find_float( options, "class_scale", 1 );
+	Lyr.jitter			= option_find_float( options, "jitter", 0.2f );
+	Lyr.random			= option_find_int_quiet( options, "random", 0 );
+	Lyr.reorg			= option_find_int_quiet( options, "reorg", 0 );
+
+	return Lyr;
 }
 
 cost_layer parse_cost( list *options, size_params params )
 {
-	char *type_s = option_find_str( options, "type", "sse" );
-	COST_TYPE type = get_cost_type( type_s );
-	float scale = option_find_float_quiet( options, "scale", 1 );
-	cost_layer layer = make_cost_layer( params.batch, params.inputs, type, scale );
-	layer.ratio =  option_find_float_quiet( options, "ratio", 0 );
-	return layer;
+	char *type_s		= option_find_str( options, "type", "sse" );
+	COST_TYPE type		= get_cost_type( type_s );
+	float scale			= option_find_float_quiet( options, "scale", 1 );
+	cost_layer Lyr		= make_cost_layer( params.batch, params.inputs, type, scale );
+	Lyr.ratio			=  option_find_float_quiet( options, "ratio", 0 );
+	Lyr.noobject_scale	=  option_find_float_quiet( options, "noobj", 1 );
+	Lyr.thresh			=  option_find_float_quiet( options, "thresh", 0 );
+
+	return Lyr;
 }
 
 crop_layer parse_crop( list *options, size_params params )
 {
-	int crop_height = option_find_int( options, "crop_height", 1 );
-	int crop_width = option_find_int( options, "crop_width", 1 );
-	int flip = option_find_int( options, "flip", 0 );
-	float angle = option_find_float( options, "angle", 0 );
-	float saturation = option_find_float( options, "saturation", 1 );
-	float exposure = option_find_float( options, "exposure", 1 );
+	int crop_height		= option_find_int( options, "crop_height", 1 );
+	int crop_width		= option_find_int( options, "crop_width", 1 );
+	int flip			= option_find_int( options, "flip", 0 );
+	float angle			= option_find_float( options, "angle", 0 );
+	float saturation	= option_find_float( options, "saturation", 1 );
+	float exposure		= option_find_float( options, "exposure", 1 );
 
 	int batch, h, w, c;
 	h = params.h;
 	w = params.w;
 	c = params.c;
 	batch=params.batch;
-	if ( !(h && w && c) ) error( "Layer before crop layer must output image." );
+
+	if ( !(h && w && c) )
+	//	error( "Layer before crop layer must output image." );	//  [7/6/2018 jobs]
+		error( "crop층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
 
 	int noadjust = option_find_int_quiet( options, "noadjust", 0 );
 
-	crop_layer l = make_crop_layer( batch
+	crop_layer Lyr = make_crop_layer( batch
 								, h
 								, w
 								, c
@@ -423,43 +564,50 @@ crop_layer parse_crop( list *options, size_params params )
 								, angle
 								, saturation
 								, exposure );
-
-	l.shift = option_find_float( options, "shift", 0 );
-	l.noadjust = noadjust;
-	return l;
+	Lyr.shift = option_find_float( options, "shift", 0 );
+	Lyr.noadjust = noadjust;
+	return Lyr;
 }
 
 layer parse_reorg( list *options, size_params params )
 {
-	int stride = option_find_int( options, "stride", 1 );
-	int reverse = option_find_int_quiet( options, "reverse", 0 );
+	int stride	= option_find_int( options, "stride", 1 );
+	int reverse	= option_find_int_quiet( options, "reverse", 0 );
+	int flatten	= option_find_int_quiet( options, "flatten", 0 );
+	int extra	= option_find_int_quiet( options, "extra", 0 );
 
 	int batch, h, w, c;
 	h = params.h;
 	w = params.w;
 	c = params.c;
 	batch=params.batch;
-	if ( !(h && w && c) ) error( "Layer before reorg layer must output image." );
 
-	layer layer = make_reorg_layer( batch, w, h, c, stride, reverse );
-	return layer;
+	if ( !(h && w && c) )
+	//	error( "Layer before reorg layer must output image." );	//  [7/6/2018 jobs]
+		error( "reorg층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
+
+	layer Lyr = make_reorg_layer( batch, w, h, c, stride, reverse, flatten, extra );
+	return Lyr;
 }
 
 maxpool_layer parse_maxpool( list *options, size_params params )
 {
-	int stride = option_find_int( options, "stride", 1 );
-	int size = option_find_int( options, "size", stride );
-	int padding = option_find_int_quiet( options, "padding", (size-1)/2 );
+	int stride	= option_find_int( options, "stride", 1 );
+	int size	= option_find_int( options, "size", stride );
+	int padding	= option_find_int_quiet( options, "padding", (size-1)/2 );
 
 	int batch, h, w, c;
 	h = params.h;
 	w = params.w;
 	c = params.c;
 	batch=params.batch;
-	if ( !(h && w && c) ) error( "Layer before maxpool layer must output image." );
 
-	maxpool_layer layer = make_maxpool_layer( batch, h, w, c, size, stride, padding );
-	return layer;
+	if ( !(h && w && c) )
+	//	error( "Layer before maxpool layer must output image." );	//  [7/6/2018 jobs]
+		error( "maxpool층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
+
+	maxpool_layer Lyr = make_maxpool_layer( batch, h, w, c, size, stride, padding );
+	return Lyr;
 }
 
 avgpool_layer parse_avgpool( list *options, size_params params )
@@ -469,29 +617,33 @@ avgpool_layer parse_avgpool( list *options, size_params params )
 	h = params.h;
 	c = params.c;
 	batch=params.batch;
-	if ( !(h && w && c) ) error( "Layer before avgpool layer must output image." );
 
-	avgpool_layer layer = make_avgpool_layer( batch, w, h, c );
-	return layer;
+	if ( !(h && w && c) )
+	//	error( "Layer before avgpool layer must output image." );	//  [7/6/2018 jobs]
+		error( "avgpool층 앞은 반드시 이미지출력층 이여야 함!" );	//  [7/6/2018 jobs]
+
+	avgpool_layer Lyr = make_avgpool_layer( batch, w, h, c );
+	return Lyr;
 }
 
 dropout_layer parse_dropout( list *options, size_params params )
 {
-	float probability = option_find_float( options, "probability", .5 );
-	dropout_layer layer = make_dropout_layer( params.batch, params.inputs, probability );
-	layer.out_w = params.w;
-	layer.out_h = params.h;
-	layer.out_c = params.c;
-	return layer;
+	float probability	= option_find_float( options, "probability", 0.5f );
+	dropout_layer Lyr = make_dropout_layer( params.batch, params.inputs, probability );
+	Lyr.out_w = params.w;
+	Lyr.out_h = params.h;
+	Lyr.out_c = params.c;
+
+	return Lyr;
 }
 
 layer parse_normalization( list *options, size_params params )
 {
-	float alpha = option_find_float( options, "alpha", .0001 );
-	float beta =  option_find_float( options, "beta", .75 );
-	float kappa = option_find_float( options, "kappa", 1 );
-	int size = option_find_int( options, "size", 5 );
-	layer l = make_normalization_layer( params.batch
+	float alpha	= option_find_float( options, "alpha", 0.0001f );
+	float beta	= option_find_float( options, "beta", 0.75f );
+	float kappa	= option_find_float( options, "kappa", 1 );
+	int size	= option_find_int( options, "size", 5 );
+	layer Lyr = make_normalization_layer( params.batch
 									, params.w
 									, params.h
 									, params.c
@@ -499,7 +651,7 @@ layer parse_normalization( list *options, size_params params )
 									, alpha
 									, beta
 									, kappa );
-	return l;
+	return Lyr;
 }
 
 layer parse_batchnorm( list *options, size_params params )
@@ -508,16 +660,16 @@ layer parse_batchnorm( list *options, size_params params )
 	return l;
 }
 
-layer parse_shortcut( list *options, size_params params, network net )
+layer parse_shortcut( list *options, size_params params, network *net )
 {
 	char *l = option_find( options, "from" );
 	int index = atoi( l );
 	if ( index < 0 ) index = params.index + index;
 
 	int batch = params.batch;
-	layer from = net.layers[index];
+	layer from = net->layers[index];
 
-	layer s = make_shortcut_layer( batch
+	layer Lyr = make_shortcut_layer( batch
 								, index
 								, params.w
 								, params.h
@@ -526,35 +678,67 @@ layer parse_shortcut( list *options, size_params params, network net )
 								, from.out_h
 								, from.out_c );
 
-	char *activation_s = option_find_str( options, "activation", "linear" );
+	char *activation_s	= option_find_str( options, "activation", "linear" );
 	ACTIVATION activation = get_activation( activation_s );
-	s.activation = activation;
-	return s;
+
+	Lyr.activation	= activation;
+	Lyr.alpha		= option_find_float_quiet( options, "alpha", 1 );
+	Lyr.beta		= option_find_float_quiet( options, "beta", 1 );
+	return Lyr;
 }
 
+
+layer parse_l2norm( list *options, size_params params )
+{
+	layer Lyr = make_l2norm_layer( params.batch, params.inputs );
+	Lyr.h = Lyr.out_h = params.h;
+	Lyr.w = Lyr.out_w = params.w;
+	Lyr.c = Lyr.out_c = params.c;
+	return Lyr;
+}
+
+
+layer parse_logistic( list *options, size_params params )
+{
+	layer Lyr = make_logistic_layer( params.batch, params.inputs );
+	Lyr.h = Lyr.out_h = params.h;
+	Lyr.w = Lyr.out_w = params.w;
+	Lyr.c = Lyr.out_c = params.c;
+	return Lyr;
+}
 
 layer parse_activation( list *options, size_params params )
 {
 	char *activation_s = option_find_str( options, "activation", "linear" );
 	ACTIVATION activation = get_activation( activation_s );
 
-	layer l = make_activation_layer( params.batch, params.inputs, activation );
+	layer Lyr = make_activation_layer( params.batch, params.inputs, activation );
 
-	l.out_h = params.h;
-	l.out_w = params.w;
-	l.out_c = params.c;
-	l.h = params.h;
-	l.w = params.w;
-	l.c = params.c;
+	Lyr.h = Lyr.out_h = params.h;
+	Lyr.w = Lyr.out_w = params.w;
+	Lyr.c = Lyr.out_c = params.c;
 
-	return l;
+	return Lyr;
 }
 
-route_layer parse_route( list *options, size_params params, network net )
+layer parse_upsample( list *options, size_params params, network *net )
+{
+
+	int stride = option_find_int( options, "stride", 2 );
+	layer Lyr = make_upsample_layer( params.batch, params.w, params.h, params.c, stride );
+	Lyr.scale = option_find_float_quiet( options, "scale", 1 );
+	return Lyr;
+}
+
+route_layer parse_route( list *options, size_params params, network *net )
 {
 	char *l = option_find( options, "layers" );
 	int len = strlen( l );
-	if ( !l ) error( "Route Layer must specify input layers" );
+
+	if ( !l )
+	//	error( "Route Layer must specify input layers" );	//  [7/6/2018 jobs]
+		error( "노선(Route)층은 입력(input)층을 반드시 지정해야 한다!" );	//  [7/6/2018 jobs]
+
 	int n = 1;
 	int i;
 	for ( i = 0; i < len; ++i )
@@ -570,67 +754,98 @@ route_layer parse_route( list *options, size_params params, network net )
 		l = strchr( l, ',' )+1;
 		if ( index < 0 ) index = params.index + index;
 		layers[i] = index;
-		sizes[i] = net.layers[index].outputs;
+		sizes[i] = net->layers[index].outputs;
 	}
 	int batch = params.batch;
 
-	route_layer layer = make_route_layer( batch, n, layers, sizes );
+	route_layer Lyr = make_route_layer( batch, n, layers, sizes );
 
-	convolutional_layer first = net.layers[layers[0]];
-	layer.out_w = first.out_w;
-	layer.out_h = first.out_h;
-	layer.out_c = first.out_c;
+	convolutional_layer first = net->layers[layers[0]];
+
+	Lyr.out_w = first.out_w;
+	Lyr.out_h = first.out_h;
+	Lyr.out_c = first.out_c;
+
 	for ( i = 1; i < n; ++i )
 	{
 		int index = layers[i];
-		convolutional_layer next = net.layers[index];
+		convolutional_layer next = net->layers[index];
+
 		if ( next.out_w == first.out_w && next.out_h == first.out_h )
 		{
-			layer.out_c += next.out_c;
+			Lyr.out_c += next.out_c;
 		}
 		else
 		{
-			layer.out_h = layer.out_w = layer.out_c = 0;
+			Lyr.out_h = Lyr.out_w = Lyr.out_c = 0;
 		}
 	}
 
-	return layer;
+	return Lyr;
 }
 
-learning_rate_policy get_policy( char *s )
+learning_rate_policy get_policy( char *str )
 {
-	if ( strcmp( s, "random" )==0 )		return RANDOM;
-	if ( strcmp( s, "poly" )==0 )		return POLY;
-	if ( strcmp( s, "constant" )==0 )	return CONSTANT;
-	if ( strcmp( s, "step" )==0 )		return STEP;
-	if ( strcmp( s, "exp" )==0 )		return EXP;
-	if ( strcmp( s, "sigmoid" )==0 )	return SIG;
-	if ( strcmp( s, "steps" )==0 )		return STEPS;
+	if ( strcmp( str, "random" )	== 0 )	return RANDOM;
+	if ( strcmp( str, "poly" )		== 0 )	return POLY;
+	if ( strcmp( str, "constant" )	== 0 )	return CONSTANT;
+	if ( strcmp( str, "step" )		== 0 )	return STEP;
+	if ( strcmp( str, "exp" )		== 0 )	return EXP;
+	if ( strcmp( str, "sigmoid" )	== 0 )	return SIG;
+	if ( strcmp( str, "steps" )		== 0 )	return STEPS;
 
-	fprintf( stderr, "Couldn't find policy %s, going with constant\n", s );
+	//fprintf( stderr, "Couldn't find policy %s, going with constant\n", s );	//  [7/6/2018 jobs]
+	fprintf( stderr, " %s 정책 없음, 상수(constant)로 지정함!\n", str );	//  [7/6/2018 jobs]
 
 	return CONSTANT;
 }
-// 신경망 선택항 목록으로 신경망을 생성한다
+
+data_type get_jaryogubun( char *str )
+{
+	if ( strcmp( str, "detection" )		== 0 )	return DETECTION_DATA;
+	if ( strcmp( str, "captcha" )		== 0 )	return CAPTCHA_DATA;
+	if ( strcmp( str, "region" )		== 0 )	return REGION_DATA;
+	if ( strcmp( str, "image" )			== 0 )	return IMAGE_DATA;
+	if ( strcmp( str, "compare" )		== 0 )	return COMPARE_DATA;
+	if ( strcmp( str, "writing" )		== 0 )	return WRITING_DATA;
+	if ( strcmp( str, "swag" )			== 0 )	return SWAG_DATA;
+	if ( strcmp( str, "tag" )			== 0 )	return TAG_DATA;
+	if ( strcmp( str, "old_calss" )		== 0 )	return OLD_CLASSIFICATION_DATA;
+	if ( strcmp( str, "study" )			== 0 )	return STUDY_DATA;
+	if ( strcmp( str, "det" )			== 0 )	return DET_DATA;
+	if ( strcmp( str, "super" )			== 0 )	return SUPER_DATA;
+	if ( strcmp( str, "letterbox" )		== 0 )	return LETTERBOX_DATA;
+	if ( strcmp( str, "regression" )	== 0 )	return REGRESSION_DATA;
+	if ( strcmp( str, "segmentation" )	== 0 )	return SEGMENTATION_DATA;
+	if ( strcmp( str, "instance" )		== 0 )	return INSTANCE_DATA;
+	if ( strcmp( str, "mnist" )			== 0 )	return MNIST_DATA;
+	if ( strcmp( str, "byeorim" )		== 0 )	return BYEORIM_DATA;
+
+	fprintf( stderr, " %s 자료유형 없음, 분류(Classification)로 지정함!\n", str );	
+
+	return CLASSIFICATION_DATA;
+}
+
 void parse_net_options( list *options, network *net )
 {
-	net->batch			= option_find_int( options, "batch", 1 );
-	net->learning_rate	= option_find_float( options, "learning_rate", .001 );
-	net->momentum		= option_find_float( options, "momentum", .9 );
-	net->decay			= option_find_float( options, "decay", .0001 );
-	int subdivs			= option_find_int( options, "subdivisions", 1 );
-	net->time_steps		= option_find_int_quiet( options, "time_steps", 1 );
-	net->batch			/= subdivs;
-	net->batch			*= net->time_steps;
-	net->subdivisions	= subdivs;
+	net->batch		= option_find_int( options, "batch", 1 );
+	net->learning_rate = option_find_float( options, "learning_rate", 0.001f );
+	net->momentum	= option_find_float( options, "momentum", 0.9f );
+	net->decay		= option_find_float( options, "decay", 0.0001f );
+	int subdivs		= option_find_int( options, "subdivisions", 1 );
+	net->time_steps	= option_find_int_quiet( options, "time_steps", 1 );
+	net->notruth	= option_find_int_quiet( options, "notruth", 0 );
+	net->batch /= subdivs;
+	net->batch *= net->time_steps;
+	net->subdivisions = subdivs;
+	net->random		= option_find_int_quiet( options, "random", 0 );
 
-	net->adam = option_find_int_quiet( options, "adam", 0 );
-
+	net->adam		= option_find_int_quiet( options, "adam", 0 );
 	if ( net->adam )
 	{
-		net->B1		= option_find_float( options, "B1", .9 );
-		net->B2		= option_find_float( options, "B2", .999 );
-		net->eps	= option_find_float( options, "eps", .000001 );
+		net->B1		= option_find_float( options, "B1", 0.9f );
+		net->B2		= option_find_float( options, "B2", 0.999f );
+		net->eps	= option_find_float( options, "eps", 0.0000001f );
 	}
 
 	net->h			= option_find_int_quiet( options, "height", 0 );
@@ -639,24 +854,30 @@ void parse_net_options( list *options, network *net )
 	net->inputs		= option_find_int_quiet( options, "inputs", net->h * net->w * net->c );
 	net->max_crop	= option_find_int_quiet( options, "max_crop", net->w*2 );
 	net->min_crop	= option_find_int_quiet( options, "min_crop", net->w );
+	net->max_ratio	= option_find_float_quiet( options, "max_ratio", (float)net->max_crop / net->w );
+	net->min_ratio	= option_find_float_quiet( options, "min_ratio", (float)net->min_crop / net->w );
+	net->center		= option_find_int_quiet( options, "center", 0 );
+	net->clip		= option_find_float_quiet( options, "clip", 0 );
 
 	net->angle		= option_find_float_quiet( options, "angle", 0 );
 	net->aspect		= option_find_float_quiet( options, "aspect", 1 );
-	net->saturation	= option_find_float_quiet( options, "saturation", 1 );
+	net->saturation = option_find_float_quiet( options, "saturation", 1 );
 	net->exposure	= option_find_float_quiet( options, "exposure", 1 );
 	net->hue		= option_find_float_quiet( options, "hue", 0 );
 
 	if ( !net->inputs && !(net->h && net->w && net->c) )
-		error( "No input parameters supplied" );
+	//	error( "No input parameters supplied" );	//  [7/6/2018 jobs]
+		error( "입력에 관한 참여(parameters)가 제공되지 않음!" );	//  [7/6/2018 jobs]
 
 	char *policy_s	= option_find_str( options, "policy", "constant" );
 	net->policy		= get_policy( policy_s );
 	net->burn_in	= option_find_int_quiet( options, "burn_in", 0 );
+	net->power		= option_find_float_quiet( options, "power", 4 );
 
 	if ( net->policy == STEP )
 	{
-		net->step = option_find_int( options, "step", 1 );
-		net->scale = option_find_float( options, "scale", 1 );
+		net->step	= option_find_int( options, "step", 1 );
+		net->scale	= option_find_float( options, "scale", 1 );
 	}
 	else if ( net->policy == STEPS )
 	{
@@ -664,34 +885,34 @@ void parse_net_options( list *options, network *net )
 		char *p = option_find( options, "scales" );
 
 		if ( !l || !p )
-			error( "STEPS policy must have steps and scales in cfg file" );
+		//	error( "STEPS policy must have steps and scales in cfg file" );	//  [7/6/2018 jobs]
+			error( "STEPS 정책은 cfg 파일에 걸음(steps) 과 배율(scales) 이 반드시 있어야함!" );	//  [7/6/2018 jobs]
 
-		int len = strlen( l );
-		int n = 1;
-		int i;
+		int len	= strlen( l );
+		int nn	= 1;
 
-		for ( i=0; i<len; ++i )
+		int ii;
+		for ( ii=0; ii < len; ++ii )
 		{
-			if ( l[i] == ',' )
-				++n;
+			if ( l[ii] == ',' ) ++nn;
 		}
 
-		int		*steps	= calloc( n, sizeof( int ) );
-		float	*scales	= calloc( n, sizeof( float ) );
+		int *steps		= calloc( nn, sizeof( int ) );
+		float *scales	= calloc( nn, sizeof( float ) );
 
-		for ( i=0; i<n; ++i )
+		for ( ii=0; ii < nn; ++ii )
 		{
-			int		step	= atoi( l );
-			float	scale	= atof( p );
-			l = strchr( l, ',' ) + 1;
-			p = strchr( p, ',' ) + 1;
-			steps[i] = step;
-			scales[i] = scale;
+			int step    = atoi( l );
+			float scale = (float)atof( p );
+			l = strchr( l, ',' )+1;
+			p = strchr( p, ',' )+1;
+			steps[ii] = step;
+			scales[ii] = scale;
 		}
 
 		net->scales = scales;
 		net->steps = steps;
-		net->num_steps = n;
+		net->num_steps = nn;
 	}
 	else if ( net->policy == EXP )
 	{
@@ -704,10 +925,12 @@ void parse_net_options( list *options, network *net )
 	}
 	else if ( net->policy == POLY || net->policy == RANDOM )
 	{
-		net->power = option_find_float( options, "power", 1 );
 	}
 
 	net->max_batches = option_find_int( options, "max_batches", 0 );
+
+	char *jaryojong	= option_find_str( options, "jaryogubun", "class" );
+	net->JaRyoJong	= get_jaryogubun( jaryojong );
 }
 
 int is_network( section *s )
@@ -715,170 +938,147 @@ int is_network( section *s )
 	return (strcmp( s->type, "[net]" )==0
 		|| strcmp( s->type, "[network]" )==0);
 }
-
-//----------------------------------------------------------------------------------------
-// 신경망 설정파일을 읽고 분석하여 신경망을 설정한다
-network parse_network_cfg( char *filename )
+// 신경망 구성파일로 신경망을 만든다
+network *parse_network_cfg( char *filename )
 {
-	// 신경망 설정파일을 읽는다
 	list *sections = read_cfg( filename );
-	node *n = sections->front;
+	node *nd = sections->front;
 
-	if ( !n )
-		//error( "Config file has no sections" );
-		error( "구성파일에 단락이 없음." );
+	if ( !nd )
+		//error( "Config file has no sections" );	//  [7/6/2018 jobs]
+		error( "구성파일 부분 없음!" );	//  [7/6/2018 jobs]
 
-	network net = make_network( sections->size - 1 );
-	net.gpu_index = gpu_index;
+	network *net = make_network( sections->size - 1 );
+	net->gpu_index = gpu_index;
 	size_params params;
 
-	section *s = (section *)n->val;
+	section *s = (section *)nd->val;
 	list *options = s->options;
 
 	if ( !is_network( s ) )
-		//error( "First section must be [net] or [network]" );
-		error( "첫번째 단락은 반드시 [net] 또는 [network] 이어야 한다." );
+		//error( "First section must be [net] or [network]" );	//  [7/6/2018 jobs]
+		error( "첫번째 부분은 반드시 [net] 또는 [network] 여야 함! " );	//  [7/6/2018 jobs]
 
-	// 신경망 기본 구성값 설정
-	parse_net_options( options, &net );
+	parse_net_options( options, net );	// 망 선택사항 설정
 
-	params.h = net.h;
-	params.w = net.w;
-	params.c = net.c;
-	params.inputs = net.inputs;
-	params.batch = net.batch;
-	params.time_steps = net.time_steps;
+	params.h = net->h;
+	params.w = net->w;
+	params.c = net->c;
+	params.inputs = net->inputs;
+	params.batch = net->batch;
+	params.time_steps = net->time_steps;
 	params.net = net;
 
 	size_t workspace_size = 0;
-	n = n->next;
+	nd = nd->next;
 	int count = 0;
 	free_section( s );
-	fprintf( stderr, "layer     filters    size              input                output\n" );
-	// 단을 반복해서 모든 단을 생성한다
-	while ( n )
+	//fprintf( stderr, "layer     filters    size              input                output\n" );	//  [7/7/2018 jobs]
+	fprintf( stderr, "층        포집(필터)  크기               입력                  출력\n" );	//  [7/7/2018 jobs]
+
+	while ( nd )
 	{
 		params.index = count;
 		fprintf( stderr, "%5d ", count );
-		s = (section *)n->val;
+		s = (section *)nd->val;
 		options = s->options;
-		layer l = { 0 };
 
+		layer Lyr = { 0 };
 		LAYER_TYPE lt = string_to_layer_type( s->type );
 
-		if ( lt == CONVOLUTIONAL )
-		{
-			l = parse_convolutional( options, params );
-		}
-		else if ( lt == LOCAL )
-		{
-			l = parse_local( options, params );
-		}
-		else if ( lt == ACTIVE )
-		{
-			l = parse_activation( options, params );
-		}
-		else if ( lt == RNN )
-		{
-			l = parse_rnn( options, params );
-		}
-		else if ( lt == GRU )
-		{
-			l = parse_gru( options, params );
-		}
-		else if ( lt == CRNN )
-		{
-			l = parse_crnn( options, params );
-		}
-		else if ( lt == CONNECTED )
-		{
-			l = parse_connected( options, params );
-		}
-		else if ( lt == CROP )
-		{
-			l = parse_crop( options, params );
-		}
-		else if ( lt == COST )
-		{
-			l = parse_cost( options, params );
-		}
-		else if ( lt == REGION )
-		{
-			l = parse_region( options, params );
-		}
-		else if ( lt == DETECTION )
-		{
-			l = parse_detection( options, params );
-		}
+		if		( lt == CONVOLUTIONAL )		{	Lyr = parse_convolutional( options, params );	}
+		else if ( lt == DECONVOLUTIONAL )	{	Lyr = parse_deconvolutional( options, params );	}
+		else if ( lt == LOCAL )				{	Lyr = parse_local( options, params );			}
+		else if ( lt == ACTIVE )			{	Lyr = parse_activation( options, params );		}
+		else if ( lt == LOGXENT )			{	Lyr = parse_logistic( options, params );		}
+		else if ( lt == L2NORM )			{	Lyr = parse_l2norm( options, params );			}
+		else if ( lt == RNN )				{	Lyr = parse_rnn( options, params );				}
+		else if ( lt == GRU )				{	Lyr = parse_gru( options, params );				}
+		else if ( lt == LSTM )				{	Lyr = parse_lstm( options, params );			}
+		else if ( lt == CRNN )				{	Lyr = parse_crnn( options, params );			}
+		else if ( lt == CONNECTED )			{	Lyr = parse_connected( options, params );		}
+		else if ( lt == CROP )				{	Lyr = parse_crop( options, params );			}
+		else if ( lt == COST )				{	Lyr = parse_cost( options, params );			}
+		else if ( lt == REGION )			{	Lyr = parse_region( options, params );			}
+		else if ( lt == YOLO )				{	Lyr = parse_yolo( options, params );			}
+		else if ( lt == DETECTION )			{	Lyr = parse_detection( options, params );		}
 		else if ( lt == SOFTMAX )
 		{
-			l = parse_softmax( options, params );
-			net.hierarchy = l.softmax_tree;
+												Lyr = parse_softmax( options, params );
+			net->hierarchy = Lyr.softmax_tree;
 		}
-		else if ( lt == NORMALIZATION )
-		{
-			l = parse_normalization( options, params );
-		}
-		else if ( lt == BATCHNORM )
-		{
-			l = parse_batchnorm( options, params );
-		}
-		else if ( lt == MAXPOOL )
-		{
-			l = parse_maxpool( options, params );
-		}
-		else if ( lt == REORG )
-		{
-			l = parse_reorg( options, params );
-		}
-		else if ( lt == AVGPOOL )
-		{
-			l = parse_avgpool( options, params );
-		}
-		else if ( lt == ROUTE )
-		{
-			l = parse_route( options, params, net );
-		}
-		else if ( lt == SHORTCUT )
-		{
-			l = parse_shortcut( options, params, net );
-		}
+		else if ( lt == NORMALIZATION )		{	Lyr = parse_normalization( options, params );	}
+		else if ( lt == BATCHNORM )			{	Lyr = parse_batchnorm( options, params );		}
+		else if ( lt == MAXPOOL )			{	Lyr = parse_maxpool( options, params );			}
+		else if ( lt == REORG )				{	Lyr = parse_reorg( options, params );			}
+		else if ( lt == AVGPOOL )			{	Lyr = parse_avgpool( options, params );			}
+		else if ( lt == ROUTE )				{	Lyr = parse_route( options, params, net );		}
+		else if ( lt == UPSAMPLE )			{	Lyr = parse_upsample( options, params, net );	}
+		else if ( lt == SHORTCUT )			{	Lyr = parse_shortcut( options, params, net );	}
 		else if ( lt == DROPOUT )
 		{
-			l = parse_dropout( options, params );
-			l.output = net.layers[count-1].output;
-			l.delta = net.layers[count-1].delta;
+			Lyr = parse_dropout( options, params );
+			Lyr.output		= net->layers[count-1].output;
+			Lyr.delta		= net->layers[count-1].delta;
+
 			#ifdef GPU
-			l.output_gpu = net.layers[count-1].output_gpu;
-			l.delta_gpu = net.layers[count-1].delta_gpu;
+			Lyr.output_gpu	= net->layers[count-1].output_gpu;
+			Lyr.delta_gpu	= net->layers[count-1].delta_gpu;
 			#endif
 		}
 		else
 		{
-			fprintf( stderr, "Type not recognized: %s\n", s->type );
+			//fprintf( stderr, "Type not recognized: %s\n", s->type );	//  [7/6/2018 jobs]
+			fprintf( stderr, "층 유형 인식안됨: %s\n", s->type );	//  [7/6/2018 jobs]
 		}
 
-		l.dontload = option_find_int_quiet( options, "dontload", 0 );
-		l.dontloadscales = option_find_int_quiet( options, "dontloadscales", 0 );
-		option_unused( options );
-		net.layers[count] = l;
-		if ( l.workspace_size > workspace_size ) workspace_size = l.workspace_size;
+		Lyr.clip				= net->clip;
+		Lyr.truth				= option_find_int_quiet( options, "truth", 0 );
+		Lyr.onlyforward			= option_find_int_quiet( options, "onlyforward", 0 );
+		Lyr.stopbackward		= option_find_int_quiet( options, "stopbackward", 0 );
+		Lyr.dontsave			= option_find_int_quiet( options, "dontsave", 0 );
+		Lyr.dontload			= option_find_int_quiet( options, "dontload", 0 );
+		Lyr.dontloadscales		= option_find_int_quiet( options, "dontloadscales", 0 );
+		Lyr.learning_rate_scale	= option_find_float_quiet( options, "learning_rate", 1 );
+		Lyr.smooth				= option_find_float_quiet( options, "smooth", 0 );
+
+		option_unused( options );	// 미사용 선택사항을 출력하여 알려준다
+
+		net->layers[count] = Lyr;	// 생성한 현재단의 주소를 저장한다
+
+		if ( Lyr.workspace_size > workspace_size )
+			workspace_size = Lyr.workspace_size;
+
 		free_section( s );
-		n = n->next;
+		nd = nd->next;
 		++count;
 
-		if ( n )
+		if ( nd )
 		{
-			params.h = l.out_h;
-			params.w = l.out_w;
-			params.c = l.out_c;
-			params.inputs = l.outputs;
+			params.h = Lyr.out_h;
+			params.w = Lyr.out_w;
+			params.c = Lyr.out_c;
+			params.inputs = Lyr.outputs;
 		}
 	}
 
 	free_list( sections );
-	net.outputs = get_network_output_size( net );
-	net.output = get_network_output( net );
+	layer out		= get_network_output_layer( net );
+	net->outputs	= out.outputs;
+	net->truths		= out.outputs;
+
+	if ( net->layers[net->n-1].truths )
+		net->truths = net->layers[net->n-1].truths;
+
+	net->output	= out.output;
+	net->input	= calloc( net->inputs*net->batch, sizeof( float ) );
+	net->truth	= calloc( net->truths*net->batch, sizeof( float ) );
+
+	#ifdef GPU
+	net->output_gpu	= out.output_gpu;
+	net->input_gpu	= cuda_make_array( net->input, net->inputs*net->batch );
+	net->truth_gpu	= cuda_make_array( net->truth, net->truths*net->batch );
+	#endif
 
 	if ( workspace_size )
 	{
@@ -886,123 +1086,89 @@ network parse_network_cfg( char *filename )
 		#ifdef GPU
 		if ( gpu_index >= 0 )
 		{
-			net.workspace = cuda_make_array( 0, (workspace_size-1)/sizeof( float )+1 );
+			net->workspace = cuda_make_array( 0, (workspace_size-1)/sizeof( float )+1 );
 		}
 		else
 		{
-			net.workspace = calloc( 1, workspace_size );
+			net->workspace = calloc( 1, workspace_size );
 		}
 		#else
-		net.workspace = calloc( 1, workspace_size );
+		net->workspace = calloc( 1, workspace_size );
 		#endif
 	}
-
 	return net;
 }
 
-//----------------------------------------------------------------------------------------
-// 평가를 위한 모드이면 dropout 층의 dropout 비율을 재설정한다
-void SeolJeong_network_droupout( network *net )
-{
-	int ii = 0;
-
-	// 신경망 층을 반복하여 dropout 비율을 수정한다
-	for ( ii=0; ii<net->n; ++ii )
-	{
-		layer Dan = net->layers[ii];
-
-		if ( Dan.type == DROPOUT )
-		{
-			float JeonGab = Dan.probability;
-
-			//Dan.probability = 1.0f;
-			//Dan.scale = 1.0f;
-			Dan.probability = 0.0f;
-			Dan.scale = 1.0f / (1.0f - Dan.probability);
-
-			fprintf( stderr, "dropout 비: %.2f 에서 %.2f 로 변경\n", JeonGab, Dan.probability );
-		}
-	}
-
-}
-
-//----------------------------------------------------------------------------------------
-// 파일에서 신경망 구성정보를 읽고 목록으로 만든다
 list *read_cfg( char *filename )
 {
 	//FILE *file = fopen( filename, "r" );
 	FILE *file; fopen_s( &file, filename, "r" );
-	if ( file == 0 )
-		file_error( filename );
+
+	if ( file == 0 ) file_error( filename );
 
 	char *line;
 	int nu = 0;
-	list *sections = make_list();
+	list *options = make_list();
 	section *current = 0;
 
 	while ( (line=fgetl( file )) != 0 )
 	{
 		++nu;
 		strip( line );
-
 		switch ( line[0] )
 		{
 		case '[':
 			current = malloc( sizeof( section ) );
-			list_insert( sections, current );	//목록 추가
-			current->options = make_list();		//단 구성정보
-			current->type = line;				//단 유형
+			list_insert( options, current );
+			current->options = make_list();
+			current->type = line;
 			break;
-
 		case '\0':
 		case '#':
 		case ';':
-			free( line );	//버퍼에서 현재행의 값을 제거한다
+			free( line );
 			break;
-
 		default:
-			if ( !read_option( line, current->options ) )	//단 구성정보를 읽는다
+			if ( !read_option( line, current->options ) )
 			{
-				//fprintf( stderr, "Config file error line %d, could parse: %s\n"
-				fprintf( stderr, "구성파일 오류 행: %d, 분석한 구문: %s\n"
-					, nu, line );
-
-				free( line );	//버퍼에서 현재행의 값을 제거한다
+				fprintf( stderr
+						//, "Config file error line %d, could parse: %s\n"	//  [7/6/2018 jobs]
+						, "구성파일 오류발생 행: %d, 분석내용: %s\n"				//  [7/6/2018 jobs]
+						, nu, line );
+				free( line );
 			}
 			break;
 		}
 	}
-
 	fclose( file );
-
-	return sections;
+	return options;
 }
 
-void save_convolutional_weights_binary( layer l, FILE *fp )
+void save_convolutional_weights_binary( layer Lyr, FILE *fp )
 {
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		pull_convolutional_layer( l );
+		pull_convolutional_layer( Lyr );
 	}
 	#endif
 
-	binarize_weights( l.weights, l.n, l.c*l.size*l.size, l.binary_weights );
-
-	int size = l.c*l.size*l.size;
+	binarize_weights( Lyr.weights, Lyr.n, Lyr.c*Lyr.size*Lyr.size, Lyr.binary_weights );
+	int size = Lyr.c*Lyr.size*Lyr.size;
 	int i, j, k;
-	fwrite( l.biases, sizeof( float ), l.n, fp );
+	fwrite( Lyr.biases, sizeof( float ), Lyr.n, fp );
 
-	if ( l.batch_normalize )
+	if ( Lyr.batch_normalize )
 	{
-		fwrite( l.scales, sizeof( float ), l.n, fp );
-		fwrite( l.rolling_mean, sizeof( float ), l.n, fp );
-		fwrite( l.rolling_variance, sizeof( float ), l.n, fp );
+		fwrite( Lyr.scales, sizeof( float ), Lyr.n, fp );
+		fwrite( Lyr.rolling_mean, sizeof( float ), Lyr.n, fp );
+		fwrite( Lyr.rolling_variance, sizeof( float ), Lyr.n, fp );
 	}
 
-	for ( i = 0; i < l.n; ++i )
+	for ( i = 0; i < Lyr.n; ++i )
 	{
-		float mean = l.binary_weights[i*size];
+		float mean = Lyr.binary_weights[i*size];
+
 		if ( mean < 0 ) mean = -mean;
 		fwrite( &mean, sizeof( float ), 1, fp );
 
@@ -1014,17 +1180,16 @@ void save_convolutional_weights_binary( layer l, FILE *fp )
 			for ( k = 0; k < 8; ++k )
 			{
 				if ( j*8 + k >= size ) break;
-				if ( l.binary_weights[index + k] > 0 ) c = (c | 1<<k);
+				if ( Lyr.binary_weights[index + k] > 0 ) c = (c | 1<<k);
 			}
-
 			fwrite( &c, sizeof( char ), 1, fp );
 		}
 	}
 }
 
-void save_convolutional_weights( layer l, FILE *fp )
+void save_convolutional_weights( layer Lyr, FILE *fp )
 {
-	if ( l.binary )
+	if ( Lyr.binary )
 	{
 		//save_convolutional_weights_binary(l, fp);
 		//return;
@@ -1033,149 +1198,168 @@ void save_convolutional_weights( layer l, FILE *fp )
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		pull_convolutional_layer( l );
+		pull_convolutional_layer( Lyr );
 	}
 	#endif
 
-	int num = l.n * l.c * l.size * l.size;
-	fwrite( l.biases, sizeof( float ), l.n, fp );
+	int num = Lyr.nweights;
+	fwrite( Lyr.biases, sizeof( float ), Lyr.n, fp );
 
-	if ( l.batch_normalize )
+	if ( Lyr.batch_normalize )
 	{
-		fwrite( l.scales, sizeof( float ), l.n, fp );
-		fwrite( l.rolling_mean, sizeof( float ), l.n, fp );
-		fwrite( l.rolling_variance, sizeof( float ), l.n, fp );
+		fwrite( Lyr.scales, sizeof( float ), Lyr.n, fp );
+		fwrite( Lyr.rolling_mean, sizeof( float ), Lyr.n, fp );
+		fwrite( Lyr.rolling_variance, sizeof( float ), Lyr.n, fp );
 	}
-	fwrite( l.weights, sizeof( float ), num, fp );
-
-	if ( l.adam )
-	{
-		fwrite( l.m, sizeof( float ), num, fp );
-		fwrite( l.v, sizeof( float ), num, fp );
-	}
+	fwrite( Lyr.weights, sizeof( float ), num, fp );
 }
 
-void save_batchnorm_weights( layer l, FILE *fp )
+void save_batchnorm_weights( layer Lyr, FILE *fp )
 {
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		pull_batchnorm_layer( l );
+		pull_batchnorm_layer( Lyr );
 	}
 	#endif
-	fwrite( l.scales, sizeof( float ), l.c, fp );
-	fwrite( l.rolling_mean, sizeof( float ), l.c, fp );
-	fwrite( l.rolling_variance, sizeof( float ), l.c, fp );
+
+	fwrite( Lyr.scales, sizeof( float ), Lyr.c, fp );
+	fwrite( Lyr.rolling_mean, sizeof( float ), Lyr.c, fp );
+	fwrite( Lyr.rolling_variance, sizeof( float ), Lyr.c, fp );
 }
 
-void save_connected_weights( layer l, FILE *fp )
+void save_connected_weights( layer Lyr, FILE *fp )
 {
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		pull_connected_layer( l );
+		pull_connected_layer( Lyr );
 	}
 	#endif
-	fwrite( l.biases, sizeof( float ), l.outputs, fp );
-	fwrite( l.weights, sizeof( float ), l.outputs*l.inputs, fp );
 
-	if ( l.batch_normalize )
+	fwrite( Lyr.biases, sizeof( float ), Lyr.outputs, fp );
+	fwrite( Lyr.weights, sizeof( float ), Lyr.outputs*Lyr.inputs, fp );
+
+	if ( Lyr.batch_normalize )
 	{
-		fwrite( l.scales, sizeof( float ), l.outputs, fp );
-		fwrite( l.rolling_mean, sizeof( float ), l.outputs, fp );
-		fwrite( l.rolling_variance, sizeof( float ), l.outputs, fp );
+		fwrite( Lyr.scales, sizeof( float ), Lyr.outputs, fp );
+		fwrite( Lyr.rolling_mean, sizeof( float ), Lyr.outputs, fp );
+		fwrite( Lyr.rolling_variance, sizeof( float ), Lyr.outputs, fp );
 	}
 }
 
-void save_weights_upto( network net, char *filename, int cutoff )
+void save_weights_upto( network *net, char *filename, int cutoff )
 {
 	#ifdef GPU
-	if ( net.gpu_index >= 0 )
+	if ( net->gpu_index >= 0 )
 	{
-		cuda_set_device( net.gpu_index );
+		cuda_set_device( net->gpu_index );
 	}
 	#endif
-	//fprintf( stderr, "Saving weights to %s\n", filename );
-	fprintf( stderr, "가중값을 %s로 저장중...\n", filename );
+
+	//fprintf( stderr, "Saving weights to %s\n", filename );	//  [7/6/2018 jobs]
+	fprintf( stderr, "저장한 가중값 파일이름: %s\n", filename );	//  [7/6/2018 jobs]
 	//FILE *fp = fopen( filename, "wb" );
 	FILE *fp; fopen_s( &fp, filename, "wb" );
-	if ( !fp )
-		file_error( filename );
+
+	if ( !fp ) file_error( filename );
 
 	int major = 0;
-	int minor = 1;
+	int minor = 2;
 	int revision = 0;
 	fwrite( &major, sizeof( int ), 1, fp );
 	fwrite( &minor, sizeof( int ), 1, fp );
 	fwrite( &revision, sizeof( int ), 1, fp );
-	fwrite( net.seen, sizeof( int ), 1, fp );
+	fwrite( net->seen, sizeof( size_t ), 1, fp );
 
-	int i;
-	for ( i=0; i<net.n && i<cutoff; ++i )
+	int ii;
+	for ( ii=0; ii < net->n && ii < cutoff; ++ii )
 	{
-		layer l = net.layers[i];
+		layer Lyr = net->layers[ii];
+		if ( Lyr.dontsave ) continue;
 
-		if ( l.type == CONVOLUTIONAL )
+		if ( Lyr.type == CONVOLUTIONAL || Lyr.type == DECONVOLUTIONAL )
 		{
-			save_convolutional_weights( l, fp );
+			save_convolutional_weights( Lyr, fp );
 		}
 
-		if ( l.type == CONNECTED )
+		if ( Lyr.type == CONNECTED )
 		{
-			save_connected_weights( l, fp );
+			save_connected_weights( Lyr, fp );
 		}
 
-		if ( l.type == BATCHNORM )
+		if ( Lyr.type == BATCHNORM )
 		{
-			save_batchnorm_weights( l, fp );
+			save_batchnorm_weights( Lyr, fp );
 		}
 
-		if ( l.type == RNN )
+		if ( Lyr.type == RNN )
 		{
-			save_connected_weights( *(l.input_layer), fp );
-			save_connected_weights( *(l.self_layer), fp );
-			save_connected_weights( *(l.output_layer), fp );
+			save_connected_weights( *(Lyr.input_layer), fp );
+			save_connected_weights( *(Lyr.self_layer), fp );
+			save_connected_weights( *(Lyr.output_layer), fp );
 		}
 
-		if ( l.type == GRU )
+		if ( Lyr.type == LSTM )
 		{
-			save_connected_weights( *(l.input_z_layer), fp );
-			save_connected_weights( *(l.input_r_layer), fp );
-			save_connected_weights( *(l.input_h_layer), fp );
-			save_connected_weights( *(l.state_z_layer), fp );
-			save_connected_weights( *(l.state_r_layer), fp );
-			save_connected_weights( *(l.state_h_layer), fp );
+			save_connected_weights( *(Lyr.wi), fp );
+			save_connected_weights( *(Lyr.wf), fp );
+			save_connected_weights( *(Lyr.wo), fp );
+			save_connected_weights( *(Lyr.wg), fp );
+			save_connected_weights( *(Lyr.ui), fp );
+			save_connected_weights( *(Lyr.uf), fp );
+			save_connected_weights( *(Lyr.uo), fp );
+			save_connected_weights( *(Lyr.ug), fp );
 		}
 
-		if ( l.type == CRNN )
+		if ( Lyr.type == GRU )
 		{
-			save_convolutional_weights( *(l.input_layer), fp );
-			save_convolutional_weights( *(l.self_layer), fp );
-			save_convolutional_weights( *(l.output_layer), fp );
+			if ( 1 )
+			{
+				save_connected_weights( *(Lyr.wz), fp );
+				save_connected_weights( *(Lyr.wr), fp );
+				save_connected_weights( *(Lyr.wh), fp );
+				save_connected_weights( *(Lyr.uz), fp );
+				save_connected_weights( *(Lyr.ur), fp );
+				save_connected_weights( *(Lyr.uh), fp );
+			}
+			else
+			{
+				save_connected_weights( *(Lyr.reset_layer), fp );
+				save_connected_weights( *(Lyr.update_layer), fp );
+				save_connected_weights( *(Lyr.state_layer), fp );
+			}
 		}
 
-		if ( l.type == LOCAL )
+		if ( Lyr.type == CRNN )
+		{
+			save_convolutional_weights( *(Lyr.input_layer), fp );
+			save_convolutional_weights( *(Lyr.self_layer), fp );
+			save_convolutional_weights( *(Lyr.output_layer), fp );
+		}
+
+		if ( Lyr.type == LOCAL )
 		{
 			#ifdef GPU
 			if ( gpu_index >= 0 )
 			{
-				pull_local_layer( l );
+				pull_local_layer( Lyr );
 			}
 			#endif
-			int locations = l.out_w*l.out_h;
-			int size = l.size*l.size*l.c*l.n*locations;
-			fwrite( l.biases, sizeof( float ), l.outputs, fp );
-			fwrite( l.weights, sizeof( float ), size, fp );
+
+			int locations = Lyr.out_w*Lyr.out_h;
+			int size = Lyr.size*Lyr.size*Lyr.c*Lyr.n*locations;
+
+			fwrite( Lyr.biases, sizeof( float ), Lyr.outputs, fp );
+			fwrite( Lyr.weights, sizeof( float ), size, fp );
 		}
 	}
 
-	fprintf( stderr, "신경망 저장 완료!\n" );
 	fclose( fp );
 }
-// 신경망 가중값을 파일로 저장한다
-void save_weights( network net, char *filename )
+void save_weights( network *net, char *filename )
 {
-	save_weights_upto( net, filename, net.n );
+	save_weights_upto( net, filename, net->n );
 }
 
 void transpose_matrix( float *a, int rows, int cols )
@@ -1193,147 +1377,169 @@ void transpose_matrix( float *a, int rows, int cols )
 	free( transpose );
 }
 
-void load_connected_weights( layer l, FILE *fp, int transpose )
+void load_connected_weights( layer Lyr, FILE *fp, int transpose )
 {
-	fread( l.biases, sizeof( float ), l.outputs, fp );
-	fread( l.weights, sizeof( float ), l.outputs*l.inputs, fp );
+	fread( Lyr.biases, sizeof( float ), Lyr.outputs, fp );
+	fread( Lyr.weights, sizeof( float ), Lyr.outputs*Lyr.inputs, fp );
 	if ( transpose )
 	{
-		transpose_matrix( l.weights, l.inputs, l.outputs );
+		transpose_matrix( Lyr.weights, Lyr.inputs, Lyr.outputs );
 	}
-	//printf("Biases: %f mean %f variance\n", mean_array(l.biases, l.outputs), variance_array(l.biases, l.outputs));
-	//printf("Weights: %f mean %f variance\n", mean_array(l.weights, l.outputs*l.inputs), variance_array(l.weights, l.outputs*l.inputs));
-	if ( l.batch_normalize && (!l.dontloadscales) )
+
+	//printf( "Biases: %f mean %f variance\n"
+	//		, mean_array(Lyr.biases, Lyr.outputs)
+	//		, variance_array(Lyr.biases, Lyr.outputs) );
+	//printf( "Weights: %f mean %f variance\n"
+	//		, mean_array(Lyr.weights, Lyr.outputs*Lyr.inputs)
+	//		, variance_array(Lyr.weights, Lyr.outputs*Lyr.inputs) );
+
+	if ( Lyr.batch_normalize && (!Lyr.dontloadscales) )
 	{
-		fread( l.scales, sizeof( float ), l.outputs, fp );
-		fread( l.rolling_mean, sizeof( float ), l.outputs, fp );
-		fread( l.rolling_variance, sizeof( float ), l.outputs, fp );
-		//printf("Scales: %f mean %f variance\n", mean_array(l.scales, l.outputs), variance_array(l.scales, l.outputs));
-		//printf("rolling_mean: %f mean %f variance\n", mean_array(l.rolling_mean, l.outputs), variance_array(l.rolling_mean, l.outputs));
-		//printf("rolling_variance: %f mean %f variance\n", mean_array(l.rolling_variance, l.outputs), variance_array(l.rolling_variance, l.outputs));
+		fread( Lyr.scales, sizeof( float ), Lyr.outputs, fp );
+		fread( Lyr.rolling_mean, sizeof( float ), Lyr.outputs, fp );
+		fread( Lyr.rolling_variance, sizeof( float ), Lyr.outputs, fp );
+		//printf( "Scales: %f mean %f variance\n"
+		//		, mean_array(Lyr.scales, Lyr.outputs)
+		//		, variance_array(Lyr.scales, Lyr.outputs));
+		//printf( "rolling_mean: %f mean %f variance\n"
+		//		, mean_array( Lyr.rolling_mean, Lyr.outputs )
+		//		, variance_array( Lyr.rolling_mean, Lyr.outputs ));
+		//printf( "rolling_variance: %f mean %f variance\n"
+		//		, mean_array( Lyr.rolling_variance, Lyr.outputs )
+		//		, variance_array( Lyr.rolling_variance, Lyr.outputs ));
 	}
+
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		push_connected_layer( l );
+		push_connected_layer( Lyr );
 	}
 	#endif
 }
 
-void load_batchnorm_weights( layer l, FILE *fp )
+void load_batchnorm_weights( layer Lyr, FILE *fp )
 {
-	fread( l.scales, sizeof( float ), l.c, fp );
-	fread( l.rolling_mean, sizeof( float ), l.c, fp );
-	fread( l.rolling_variance, sizeof( float ), l.c, fp );
+	fread( Lyr.scales, sizeof( float ), Lyr.c, fp );
+	fread( Lyr.rolling_mean, sizeof( float ), Lyr.c, fp );
+	fread( Lyr.rolling_variance, sizeof( float ), Lyr.c, fp );
+
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		push_batchnorm_layer( l );
+		push_batchnorm_layer( Lyr );
 	}
 	#endif
 }
 
-void load_convolutional_weights_binary( layer l, FILE *fp )
+void load_convolutional_weights_binary( layer Lyr, FILE *fp )
 {
-	fread( l.biases, sizeof( float ), l.n, fp );
-	if ( l.batch_normalize && (!l.dontloadscales) )
+	fread( Lyr.biases, sizeof( float ), Lyr.n, fp );
+
+	if ( Lyr.batch_normalize && (!Lyr.dontloadscales) )
 	{
-		fread( l.scales, sizeof( float ), l.n, fp );
-		fread( l.rolling_mean, sizeof( float ), l.n, fp );
-		fread( l.rolling_variance, sizeof( float ), l.n, fp );
+		fread( Lyr.scales, sizeof( float ), Lyr.n, fp );
+		fread( Lyr.rolling_mean, sizeof( float ), Lyr.n, fp );
+		fread( Lyr.rolling_variance, sizeof( float ), Lyr.n, fp );
 	}
-	int size = l.c*l.size*l.size;
+
+	int size = Lyr.c*Lyr.size*Lyr.size;
 	int i, j, k;
-	for ( i = 0; i < l.n; ++i )
+	for ( i = 0; i < Lyr.n; ++i )
 	{
 		float mean = 0;
 		fread( &mean, sizeof( float ), 1, fp );
+
 		for ( j = 0; j < size/8; ++j )
 		{
 			int index = i*size + j*8;
 			unsigned char c = 0;
 			fread( &c, sizeof( char ), 1, fp );
+
 			for ( k = 0; k < 8; ++k )
 			{
 				if ( j*8 + k >= size ) break;
-				l.weights[index + k] = (c & 1<<k) ? mean : -mean;
+				Lyr.weights[index + k] = (c & 1<<k) ? mean : -mean;
 			}
 		}
 	}
+
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		push_convolutional_layer( l );
+		push_convolutional_layer( Lyr );
 	}
 	#endif
 }
 
-void load_convolutional_weights( layer Dan, FILE *fp )
+void load_convolutional_weights( layer Lyr, FILE *fp )
 {
-	if ( Dan.binary )
+	if ( Lyr.binary )
 	{
 		//load_convolutional_weights_binary(l, fp);
 		//return;
 	}
 
-	int GaeSu = Dan.n*Dan.c*Dan.size*Dan.size;
-	// 파일에서 편향값을 읽고 탑재한다
-	fread( Dan.biases, sizeof( float ), Dan.n, fp );
+	int num = Lyr.nweights;
+	fread( Lyr.biases, sizeof( float ), Lyr.n, fp );
 
-	if ( Dan.batch_normalize && (!Dan.dontloadscales) )
+	if ( Lyr.batch_normalize && (!Lyr.dontloadscales) )
 	{
-		fread( Dan.scales, sizeof( float ), Dan.n, fp );
-		fread( Dan.rolling_mean, sizeof( float ), Dan.n, fp );
-		fread( Dan.rolling_variance, sizeof( float ), Dan.n, fp );
-
+		fread( Lyr.scales, sizeof( float ), Lyr.n, fp );
+		fread( Lyr.rolling_mean, sizeof( float ), Lyr.n, fp );
+		fread( Lyr.rolling_variance, sizeof( float ), Lyr.n, fp );
 		if ( 0 )
 		{
 			int i;
-			for ( i = 0; i < Dan.n; ++i )
+			for ( i = 0; i < Lyr.n; ++i )
 			{
-				printf( "%g, ", Dan.rolling_mean[i] );
+				printf( "%g, ", Lyr.rolling_mean[i] );
 			}
 			printf( "\n" );
-
-			for ( i = 0; i < Dan.n; ++i )
+			for ( i = 0; i < Lyr.n; ++i )
 			{
-				printf( "%g, ", Dan.rolling_variance[i] );
+				printf( "%g, ", Lyr.rolling_variance[i] );
 			}
 			printf( "\n" );
 		}
-
 		if ( 0 )
 		{
-			fill_cpu( Dan.n, 0, Dan.rolling_mean, 1 );
-			fill_cpu( Dan.n, 0, Dan.rolling_variance, 1 );
+			fill_cpu( Lyr.n, 0, Lyr.rolling_mean, 1 );
+			fill_cpu( Lyr.n, 0, Lyr.rolling_variance, 1 );
+		}
+		if ( 0 )
+		{
+			int i;
+			for ( i = 0; i < Lyr.n; ++i )
+			{
+				printf( "%g, ", Lyr.rolling_mean[i] );
+			}
+			printf( "\n" );
+			for ( i = 0; i < Lyr.n; ++i )
+			{
+				printf( "%g, ", Lyr.rolling_variance[i] );
+			}
+			printf( "\n" );
 		}
 	}
-	// 파일에서 가중값을 읽고 탑재한다
-	fread( Dan.weights, sizeof( float ), GaeSu, fp );
 
-	if ( Dan.adam )
+	fread( Lyr.weights, sizeof( float ), num, fp );
+	//if(Lyr.c == 3) scal_cpu(num, 1./256, Lyr.weights, 1);
+	if ( Lyr.flipped )
 	{
-		fread( Dan.m, sizeof( float ), GaeSu, fp );
-		fread( Dan.v, sizeof( float ), GaeSu, fp );
+		transpose_matrix( Lyr.weights, Lyr.c*Lyr.size*Lyr.size, Lyr.n );
 	}
-	//if(Dan.c == 3) scal_cpu(GaeSu, 1./256, Dan.weights, 1);
-	if ( Dan.flipped )
-	{
-		transpose_matrix( Dan.weights, Dan.c*Dan.size*Dan.size, Dan.n );
-	}
-	//if (Dan.binary) binarize_weights(Dan.weights, Dan.n, Dan.c*Dan.size*Dan.size, Dan.weights);
+	//if (Lyr.binary) binarize_weights(Lyr.weights, Lyr.n, Lyr.c*Lyr.size*Lyr.size, Lyr.weights);
 
 	#ifdef GPU
 	if ( gpu_index >= 0 )
 	{
-		push_convolutional_layer( Dan );
+		push_convolutional_layer( Lyr );
 	}
 	#endif
 }
 
-// 파일에서 가중값을 읽고 신경망에 탑재한다
-//void load_weights_upto( network *net, char *filename, int cutoff )
-void load_weights_upto(network *net, char *filename, int start, int cutoff)	// 바둑검토중 [6/26/2018 jobs]
+
+void load_weights_upto( network *net, char *filename, int start, int cutoff )
 {
 	#ifdef GPU
 	if ( net->gpu_index >= 0 )
@@ -1342,15 +1548,14 @@ void load_weights_upto(network *net, char *filename, int start, int cutoff)	// �
 	}
 	#endif
 
-		//fprintf( stderr, "Loading weights from %s...", filename );
-	fprintf( stderr, "%s 파일에서 신경망에 가중값 탑재중...", filename );
+	//fprintf( stderr, "Loading weights from %s...", filename );	//  [7/6/2018 jobs]
+	fprintf( stderr, "탑재중인 가중값 파일이름: %s\n", filename );	//  [7/6/2018 jobs]
+	fflush( stdout );
 
-	fflush( stdout );	// 출력버퍼의 내용을 비운다
 	//FILE *fp = fopen( filename, "rb" );
 	FILE *fp; fopen_s( &fp, filename, "rb" );
 	if ( !fp ) file_error( filename );
 
-	// GPU 관련정보를 읽는다
 	int major;
 	int minor;
 	int revision;
@@ -1358,11 +1563,9 @@ void load_weights_upto(network *net, char *filename, int start, int cutoff)	// �
 	fread( &minor, sizeof( int ), 1, fp );
 	fread( &revision, sizeof( int ), 1, fp );
 
-	//if ( (major*10 + minor) >= 2 )
-	if ( (major*10 + minor) >= 2 && major < 1000 && minor < 1000 )	// 바둑검토중 [6/26/2018 jobs]
+	if ( (major*10 + minor) >= 2 && major < 1000 && minor < 1000 )
 	{
-		//fread( net->seen, sizeof( uint64_t ), 1, fp );
-		fread( net->seen, sizeof( size_t ), 1, fp );	// 바둑검토중 [6/26/2018 jobs]
+		fread( net->seen, sizeof( size_t ), 1, fp );
 	}
 	else
 	{
@@ -1373,90 +1576,88 @@ void load_weights_upto(network *net, char *filename, int start, int cutoff)	// �
 
 	int transpose = (major > 1000) || (minor > 1000);
 
-	int i;
-
-	//for ( i=0; i<net->n && i<cutoff; ++i )
-	for ( i=start; i<net->n && i<cutoff; ++i )	// 바둑검토중 [6/26/2018 jobs]
+	int ii;
+	for ( ii=start; ii < net->n && ii < cutoff; ++ii )
 	{
-		layer l = net->layers[i];
-		if ( l.dontload ) continue;
-
-		//if ( l.type == CONVOLUTIONAL )
-		if ( l.type == CONVOLUTIONAL || l.type == DECONVOLUTIONAL )	// 바둑검토중 [6/26/2018 jobs]
+		layer Lyr = net->layers[ii];
+		if ( Lyr.dontload ) continue;
+		if ( Lyr.type == CONVOLUTIONAL || Lyr.type == DECONVOLUTIONAL )
 		{
-			load_convolutional_weights( l, fp );
+			load_convolutional_weights( Lyr, fp );
 		}
-
-		if ( l.type == CONNECTED )
+		if ( Lyr.type == CONNECTED )
 		{
-			load_connected_weights( l, fp, transpose );
+			load_connected_weights( Lyr, fp, transpose );
 		}
-
-		if ( l.type == BATCHNORM )
+		if ( Lyr.type == BATCHNORM )
 		{
-			load_batchnorm_weights( l, fp );
+			load_batchnorm_weights( Lyr, fp );
 		}
-
-		if ( l.type == CRNN )
+		if ( Lyr.type == CRNN )
 		{
-			load_convolutional_weights( *(l.input_layer), fp );
-			load_convolutional_weights( *(l.self_layer), fp );
-			load_convolutional_weights( *(l.output_layer), fp );
+			load_convolutional_weights( *(Lyr.input_layer), fp );
+			load_convolutional_weights( *(Lyr.self_layer), fp );
+			load_convolutional_weights( *(Lyr.output_layer), fp );
 		}
-
-		if ( l.type == RNN )
+		if ( Lyr.type == RNN )
 		{
-			load_connected_weights( *(l.input_layer), fp, transpose );
-			load_connected_weights( *(l.self_layer), fp, transpose );
-			load_connected_weights( *(l.output_layer), fp, transpose );
+			load_connected_weights( *(Lyr.input_layer), fp, transpose );
+			load_connected_weights( *(Lyr.self_layer), fp, transpose );
+			load_connected_weights( *(Lyr.output_layer), fp, transpose );
 		}
-		// 바둑검토중 [6/26/2018 jobs]
-/*		if ( l.type == LSTM )
+		if ( Lyr.type == LSTM )
 		{
-			load_connected_weights( *(l.wi), fp, transpose );
-			load_connected_weights( *(l.wf), fp, transpose );
-			load_connected_weights( *(l.wo), fp, transpose );
-			load_connected_weights( *(l.wg), fp, transpose );
-			load_connected_weights( *(l.ui), fp, transpose );
-			load_connected_weights( *(l.uf), fp, transpose );
-			load_connected_weights( *(l.uo), fp, transpose );
-			load_connected_weights( *(l.ug), fp, transpose );
+			load_connected_weights( *(Lyr.wi), fp, transpose );
+			load_connected_weights( *(Lyr.wf), fp, transpose );
+			load_connected_weights( *(Lyr.wo), fp, transpose );
+			load_connected_weights( *(Lyr.wg), fp, transpose );
+			load_connected_weights( *(Lyr.ui), fp, transpose );
+			load_connected_weights( *(Lyr.uf), fp, transpose );
+			load_connected_weights( *(Lyr.uo), fp, transpose );
+			load_connected_weights( *(Lyr.ug), fp, transpose );
 		}
-*/
-		if ( l.type == GRU )
+		if ( Lyr.type == GRU )
 		{
-			load_connected_weights( *(l.input_z_layer), fp, transpose );
-			load_connected_weights( *(l.input_r_layer), fp, transpose );
-			load_connected_weights( *(l.input_h_layer), fp, transpose );
-			load_connected_weights( *(l.state_z_layer), fp, transpose );
-			load_connected_weights( *(l.state_r_layer), fp, transpose );
-			load_connected_weights( *(l.state_h_layer), fp, transpose );
+			if ( 1 )
+			{
+				load_connected_weights( *(Lyr.wz), fp, transpose );
+				load_connected_weights( *(Lyr.wr), fp, transpose );
+				load_connected_weights( *(Lyr.wh), fp, transpose );
+				load_connected_weights( *(Lyr.uz), fp, transpose );
+				load_connected_weights( *(Lyr.ur), fp, transpose );
+				load_connected_weights( *(Lyr.uh), fp, transpose );
+			}
+			else
+			{
+				load_connected_weights( *(Lyr.reset_layer), fp, transpose );
+				load_connected_weights( *(Lyr.update_layer), fp, transpose );
+				load_connected_weights( *(Lyr.state_layer), fp, transpose );
+			}
 		}
-
-		if ( l.type == LOCAL )
+		if ( Lyr.type == LOCAL )
 		{
-			int locations = l.out_w*l.out_h;
-			int size = l.size*l.size*l.c*l.n*locations;
+			int locations = Lyr.out_w*Lyr.out_h;
+			int size = Lyr.size*Lyr.size*Lyr.c*Lyr.n*locations;
 
-			fread( l.biases, sizeof( float ), l.outputs, fp );
-			fread( l.weights, sizeof( float ), size, fp );
+			fread( Lyr.biases, sizeof( float ), Lyr.outputs, fp );
+			fread( Lyr.weights, sizeof( float ), size, fp );
+
 			#ifdef GPU
 			if ( gpu_index >= 0 )
 			{
-				push_local_layer( l );
+				push_local_layer( Lyr );
 			}
 			#endif
 		}
 	}
 
-	//fprintf( stderr, "Done!\n" );
-	fprintf( stderr, "신경망 탑재 완료!\n" );
+	//fprintf( stderr, "Done!\n" );	//  [7/6/2018 jobs]
+	fprintf( stderr, "가중값 탑재함!\n" );	//  [7/6/2018 jobs]
 	fclose( fp );
 }
 
 void load_weights( network *net, char *filename )
 {
-	//load_weights_upto( net, filename, net->n );
-	load_weights_upto( net, filename, 0, net->n );	// 바둑검토중 [6/26/2018 jobs]
+	load_weights_upto( net, filename, 0, net->n );
 }
 
